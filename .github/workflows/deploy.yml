@@ -24,7 +24,9 @@ jobs:
         with:
           node-version: 20
           cache: npm
-      - run: npm ci
+      # npm install (no npm ci): tolera el drift de deps opcionales
+      # multiplataforma (@emnapi/* del fallback WASM de rollup).
+      - run: npm install --no-audit --no-fund
       - run: npm run build
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
