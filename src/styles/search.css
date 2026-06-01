@@ -1,0 +1,167 @@
+/* ============================================
+   SEARCH VIEW — Styles
+   ============================================ */
+
+.search-view {
+  max-width: var(--max-width);
+  margin: 0 auto;
+}
+
+.search-title {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  margin-bottom: var(--space-4);
+}
+
+/* Search bar */
+.search-bar {
+  position: relative;
+  margin-bottom: var(--space-4);
+}
+.search-bar__icon {
+  position: absolute;
+  left: var(--space-4);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: var(--font-size-md);
+  pointer-events: none;
+}
+.search-bar__input {
+  width: 100%;
+  padding: var(--space-4) var(--space-4) var(--space-4) calc(var(--space-4) + 28px);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  color: var(--color-text-primary);
+  font-size: var(--font-size-md);
+  font-family: var(--font-family);
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+.search-bar__input:focus {
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+.search-bar__input::placeholder {
+  color: var(--color-text-muted);
+}
+
+/* Filters */
+.search-filters {
+  margin-bottom: var(--space-4);
+}
+.search-filters__body {
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  animation: fadeIn var(--transition-base) ease;
+}
+
+/* Chips */
+.chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.chip {
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-full);
+  background: var(--color-bg-tertiary);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  font-family: var(--font-family);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  white-space: nowrap;
+}
+.chip:hover {
+  background: var(--color-bg-card-hover);
+  border-color: var(--color-accent);
+}
+.chip--active {
+  background: var(--color-accent-subtle);
+  border-color: var(--color-accent);
+  color: var(--color-accent-hover);
+  font-weight: 600;
+}
+
+/* Results */
+.search-results-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: var(--color-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+.search-result-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: var(--space-3) var(--space-4);
+  background: var(--color-bg-card);
+  transition: background var(--transition-fast);
+}
+.search-result-row:hover {
+  background: var(--color-bg-card-hover);
+}
+.search-result-row__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex: 1;
+  min-width: 0;
+}
+.search-result-row__icon {
+  font-size: var(--font-size-md);
+  flex-shrink: 0;
+}
+.search-result-row__desc {
+  font-weight: 500;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-result-row__meta {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.search-result-row__amount {
+  font-weight: 700;
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+  margin-left: var(--space-3);
+}
+
+/* Highlight matches */
+.search-result-row mark {
+  background: var(--color-warning-subtle);
+  color: var(--color-warning-text);
+  border-radius: 2px;
+  padding: 0 2px;
+}
+
+/* Summary bar */
+.search-summary {
+  position: sticky;
+  bottom: calc(var(--nav-height) + var(--space-2));
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
+  margin-top: var(--space-4);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  font-size: var(--font-size-sm);
+  box-shadow: var(--shadow-lg);
+  backdrop-filter: blur(10px);
+}

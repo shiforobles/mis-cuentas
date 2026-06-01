@@ -1,0 +1,99 @@
+/* ============================================
+   MIS CUENTAS — Vista Mensual
+   ============================================ */
+
+.monthly-view {
+  animation: fadeIn var(--transition-base) ease;
+}
+
+.monthly-header {
+  margin-bottom: var(--space-4);
+}
+
+.monthly-header__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin-bottom: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.monthly-title {
+  font-size: var(--font-size-xl);
+  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.monthly-title__month {
+  background: var(--gradient-accent);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.monthly-title__year {
+  font-size: var(--font-size-base);
+  font-weight: 500;
+  color: var(--color-text-tertiary);
+}
+
+/* --- INGRESOS TABLE OVERRIDES --- */
+.income-table-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: 0 var(--space-3);
+}
+
+.income-table {
+  min-width: 500px;
+}
+
+.income-table .col-desc { width: 30%; min-width: 120px; }
+.income-table .col-amount { width: 18%; min-width: 90px; }
+.income-table .col-hours { width: 12%; min-width: 60px; }
+.income-table .col-actions { width: 40px; }
+
+/* --- EGRESOS --- */
+.expenses-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.expense-category-table {
+  min-width: 400px;
+}
+
+.expense-category-table .col-num { width: 36px; }
+.expense-category-table .col-desc { width: 40%; min-width: 100px; }
+.expense-category-table .col-amount { width: 25%; min-width: 80px; }
+.expense-category-table .col-actions { width: 36px; }
+
+/* --- DISTRIBUTION TABLE WRAP --- */
+.distribution-wrap {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 calc(-1 * var(--space-3));
+  padding: 0 var(--space-3);
+}
+
+/* --- MOBILE RESPONSIVE --- */
+@media (max-width: 480px) {
+  .monthly-title {
+    font-size: var(--font-size-lg);
+  }
+  
+  .monthly-header__top {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+  
+  .toggle-group {
+    width: 100%;
+  }
+}

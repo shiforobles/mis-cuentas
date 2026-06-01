@@ -1,0 +1,70 @@
+/**
+ * MIS CUENTAS — Quick Add View Styles
+ */
+
+.quick-add-view {
+  padding: var(--space-4) 0;
+  max-width: 500px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 140px); /* header + nav */
+}
+
+.quick-add-step {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.quick-add-header {
+  text-align: center;
+  padding: var(--space-6) var(--space-4);
+  background: var(--color-surface);
+  border-radius: 20px;
+  border: 1px solid var(--color-border);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+}
+
+.quick-add-actions {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.qa-category-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-bottom: var(--space-4);
+}
+
+.qa-category-grid::-webkit-scrollbar {
+  width: 4px;
+}
+.qa-category-grid::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 4px;
+}
+
+.qa-item-row {
+  transition: all 0.2s ease;
+  cursor: pointer;
+  border: 2px solid transparent;
+}
+
+.qa-item-row:hover {
+  background: var(--color-surface-hover);
+}
+
+.qa-item-new {
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.qa-item-new:hover {
+  background: var(--color-surface-hover);
+}

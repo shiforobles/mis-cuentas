@@ -1,0 +1,700 @@
+/**
+ * MIS CUENTAS — Vista de Configuración
+ * Editar % ideales, categorías, dólar, año, importar/exportar, gastos recurrentes.
+ */
+
+import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData } from '../db/database.js';
+import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
+import { formatARS, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
+import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
+import { $, showToast, debounce, generateId } from '../utils/helpers.js';
+
+let configData = null;
+let portfolioData = null;
+
+/**
+ * Renderiza la vista de configuración.
+ */
+export async function renderSettings() {
+  const main = document.getElementById('app-main');
+  
+  configData = await dbGet('config', 'global');
+  portfolioData = await dbGet('portfolio', 'current');
+  const dolarCCL = await getDolarCCL();
+  
+  main.innerHTML = `
+    <div class="settings-view fade-in">
+      <h1 class="settings-title">⚙️ Configuración</h1>
+      
+      <!-- Año -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">📅 Año de trabajo</h2>
+        <div class="form-field">
+          <label class="form-field__label" for="config-year">Año</label>
+          <input class="form-field__input" type="number" id="config-year" 
+                 value="${configData?.año || 2026}" min="2020" max="2050" />
+          <div class="form-field__hint">Usá las flechas ◀ ▶ del header para navegar entre años.</div>
+        </div>
+      </div>
+      
+      <!-- Dólar -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">💵 Dólar CCL</h2>
+        <div class="form-field">
+          <label class="form-field__label">Valor actual</label>
+          <div style="font-size:var(--font-size-lg);font-weight:700;color:var(--color-info-text);margin-bottom:var(--space-3)">
+            ${formatDolar(dolarCCL)}
+          </div>
+        </div>
+        <div class="form-field">
+          <label class="form-field__label" for="config-dolar-manual">Override manual (dejá vacío para usar la API)</label>
+          <input class="form-field__input" type="text" id="config-dolar-manual" 
+                 value="${configData?.dolarCCLManual || ''}" 
+                 placeholder="Ej: 1500" />
+          <div class="form-field__hint">Si cargás un valor, se usa ese en vez de la API. Borralo para volver al automático.</div>
+        </div>
+      </div>
+      
+      <!-- Distribución Ideal -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">🎯 Distribución Ideal (%)</h2>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Porcentaje objetivo de cada categoría sobre el total de egresos. Debe sumar ~100%.
+        </div>
+        <div id="ideal-percentages"></div>
+        <div style="margin-top:var(--space-3);font-size:var(--font-size-sm);color:var(--color-text-secondary)">
+          Total: <strong id="ideal-total">0%</strong>
+        </div>
+      </div>
+
+      <!-- Gastos Recurrentes (F5) -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">🔄 Gastos Recurrentes</h2>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Los ítems recurrentes se agregan automáticamente al crear un mes nuevo.
+        </div>
+        <div id="recurring-list"></div>
+        <div style="display:flex;gap:var(--space-2);margin-top:var(--space-3);flex-wrap:wrap">
+          <button class="btn btn--primary btn--sm" id="btn-add-recurring">➕ Agregar recurrente</button>
+          <button class="btn btn--secondary btn--sm" id="btn-import-recurring">📥 Importar del mes actual</button>
+        </div>
+      </div>
+      
+      <!-- Cartera -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">💼 Cartera (montos totales)</h2>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Cargá los montos totales de tu cartera. Los valores en USD se cargan directamente en dólares.
+        </div>
+        <div id="portfolio-fields"></div>
+      </div>
+      
+      <!-- Importar / Exportar -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">📦 Datos</h2>
+        <div class="action-list">
+          <div class="action-item" id="action-export-json">
+            <div class="action-item__left">
+              <span class="action-item__icon">💾</span>
+              <div>
+                <div class="action-item__text">Exportar backup (JSON)</div>
+                <div class="action-item__desc">Descargá todos tus datos como archivo JSON</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          
+          <div class="action-item" id="action-import-json">
+            <div class="action-item__left">
+              <span class="action-item__icon">📂</span>
+              <div>
+                <div class="action-item__text">Importar backup (JSON)</div>
+                <div class="action-item__desc">Restaurá datos desde un archivo JSON</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          
+          <div class="action-item" id="action-import-excel">
+            <div class="action-item__left">
+              <span class="action-item__icon">📊</span>
+              <div>
+                <div class="action-item__text">Importar Excel (.xlsx)</div>
+                <div class="action-item__desc">Importá tu archivo de Excel existente</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          
+          <div class="action-item" id="action-export-excel">
+            <div class="action-item__left">
+              <span class="action-item__icon">📗</span>
+              <div>
+                <div class="action-item__text">Exportar a Excel (.xlsx)</div>
+                <div class="action-item__desc">Descargá tus datos como archivo Excel</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          
+          <div class="action-item" id="action-export-pdf">
+            <div class="action-item__left">
+              <span class="action-item__icon">📄</span>
+              <div>
+                <div class="action-item__text">Exportar mes a PDF</div>
+                <div class="action-item__desc">Generá un PDF del mes actual para imprimir</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          
+          <div class="action-item" id="action-snapshot">
+            <div class="action-item__left">
+              <span class="action-item__icon">📸</span>
+              <div>
+                <div class="action-item__text">Guardar snapshot de cartera</div>
+                <div class="action-item__desc">Registra el estado actual de tu cartera para tracking mensual</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Input file oculto -->
+      <input type="file" id="file-input-json" accept=".json" style="display:none" />
+      <input type="file" id="file-input-excel" accept=".xlsx,.xls" style="display:none" />
+    </div>
+  `;
+  
+  renderIdealPercentages();
+  renderPortfolioFields();
+  renderRecurringList();
+  setupEventListeners();
+}
+
+// ─── RECURRING LIST (F5) ────────────────────────────────
+
+async function renderRecurringList() {
+  const container = $('#recurring-list');
+  if (!container) return;
+
+  let items = [];
+  try { items = await dbGetAll('recurring'); } catch { /* */ }
+
+  if (items.length === 0) {
+    container.innerHTML = `<div class="empty-state" style="padding:var(--space-4) 0">
+      <div class="empty-state__text" style="font-size:var(--font-size-sm)">No hay ítems recurrentes configurados.</div>
+    </div>`;
+  } else {
+    container.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+        ${items.map(r => {
+          const cat = r.categoryId ? CATEGORIAS_EGRESO.find(c => c.id === r.categoryId) : null;
+          return `
+            <div class="card" style="padding:var(--space-3);display:flex;justify-content:space-between;align-items:center">
+              <div>
+                <div style="font-weight:600;font-size:var(--font-size-sm)">
+                  ${r.tipo === 'egreso' ? '🏷️' : '💼'} ${r.descripcion}
+                </div>
+                <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">
+                  ${r.tipo === 'egreso' ? 'Egreso' : 'Ingreso'}${cat ? ` · ${cat.icon} ${cat.nombre}` : ''}
+                  ${r.proyectado ? ` · ${formatARS(r.proyectado)}` : ''}
+                </div>
+              </div>
+              <div style="display:flex;gap:var(--space-2);align-items:center">
+                <label class="toggle-switch" title="${r.activo !== false ? 'Activo' : 'Inactivo'}">
+                  <input type="checkbox" ${r.activo !== false ? 'checked' : ''} data-rec-id="${r.id}" class="rec-toggle">
+                  <span class="toggle-switch__slider"></span>
+                </label>
+                <button class="row-delete rec-delete" data-rec-id="${r.id}" title="Eliminar">✕</button>
+              </div>
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+
+    // Toggle active/inactive
+    container.querySelectorAll('.rec-toggle').forEach(toggle => {
+      toggle.addEventListener('change', async () => {
+        const recId = toggle.dataset.recId;
+        const rec = await dbGet('recurring', recId);
+        if (rec) {
+          rec.activo = toggle.checked;
+          await dbPut('recurring', rec);
+          showToast(toggle.checked ? 'Recurrente activado' : 'Recurrente desactivado', 'info');
+        }
+      });
+    });
+
+    // Delete
+    container.querySelectorAll('.rec-delete').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await dbDelete('recurring', btn.dataset.recId);
+        showToast('Recurrente eliminado', 'info');
+        renderRecurringList();
+      });
+    });
+  }
+
+  // Add recurring button
+  $('#btn-add-recurring')?.addEventListener('click', async () => {
+    const desc = prompt('Descripción del gasto/ingreso recurrente:');
+    if (!desc || !desc.trim()) return;
+    const tipo = confirm('¿Es un egreso? (OK = Egreso, Cancelar = Ingreso)') ? 'egreso' : 'ingreso';
+    let categoryId = null;
+    if (tipo === 'egreso') {
+      const catList = CATEGORIAS_EGRESO.map((c, i) => `${i + 1}. ${c.icon} ${c.nombre}`).join('\n');
+      const catIdx = parseInt(prompt(`Categoría:\n${catList}`, '1')) - 1;
+      if (catIdx >= 0 && catIdx < CATEGORIAS_EGRESO.length) {
+        categoryId = CATEGORIAS_EGRESO[catIdx].id;
+      }
+    }
+    const proy = parseNumber(prompt('Monto proyectado (0 si no aplica):', '0'));
+
+    const rec = {
+      id: `rec-${generateId()}`,
+      tipo,
+      categoryId,
+      descripcion: desc.trim(),
+      proyectado: proy,
+      activo: true,
+    };
+    await dbPut('recurring', rec);
+    showToast('Recurrente agregado 🔄', 'success');
+    renderRecurringList();
+  });
+
+  // Import from current month
+  $('#btn-import-recurring')?.addEventListener('click', async () => {
+    const año = configData?.año || 2026;
+    const mesActual = MESES[new Date().getMonth()];
+    const mk = mesKey(mesActual, año);
+    const month = await dbGet('months', mk);
+    if (!month) { showToast('No hay datos del mes actual', 'warning'); return; }
+
+    let added = 0;
+    const existing = await dbGetAll('recurring');
+    const existingDescs = existing.map(r => r.descripcion.toLowerCase());
+
+    // Ingresos
+    for (const item of month.ingresos) {
+      if (item.descripcion && !existingDescs.includes(item.descripcion.toLowerCase())) {
+        await dbPut('recurring', {
+          id: `rec-${generateId()}`,
+          tipo: 'ingreso',
+          categoryId: null,
+          descripcion: item.descripcion,
+          proyectado: item.proyectado || 0,
+          horasSemanales: item.horasSemanales || '',
+          horasMensuales: item.horasMensuales || '',
+          activo: true,
+        });
+        added++;
+      }
+    }
+
+    // Egresos
+    for (const [catId, catData] of Object.entries(month.egresos)) {
+      for (const item of (catData.items || [])) {
+        if (item.descripcion && !existingDescs.includes(item.descripcion.toLowerCase())) {
+          await dbPut('recurring', {
+            id: `rec-${generateId()}`,
+            tipo: 'egreso',
+            categoryId: parseInt(catId),
+            descripcion: item.descripcion,
+            proyectado: item.proyectado || 0,
+            activo: true,
+          });
+          added++;
+        }
+      }
+    }
+
+    showToast(`${added} ítems importados como recurrentes`, 'success');
+    renderRecurringList();
+  });
+}
+
+// ─── IDEAL PERCENTAGES ──────────────────────────────────
+
+function renderIdealPercentages() {
+  const container = $('#ideal-percentages');
+  if (!container || !configData?.distribucionIdeal) return;
+  
+  const dist = configData.distribucionIdeal;
+  
+  container.innerHTML = Object.entries(dist).map(([catId, config]) => `
+    <div class="form-field" style="margin-bottom:var(--space-2)">
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        <label style="flex:1;font-size:var(--font-size-sm);font-weight:500">${config.nombre}</label>
+        <div style="width:80px">
+          <input class="form-field__input" type="number" min="0" max="100" step="1"
+                 data-cat-id="${catId}" data-field="percentIdeal"
+                 value="${config.percent}" 
+                 style="text-align:right;padding:var(--space-2)" />
+        </div>
+        <span style="font-size:var(--font-size-sm);color:var(--color-text-tertiary);width:20px">%</span>
+      </div>
+    </div>
+  `).join('');
+  
+  updateIdealTotal();
+  
+  container.querySelectorAll('input[data-field="percentIdeal"]').forEach(input => {
+    input.addEventListener('change', async () => {
+      const catId = input.dataset.catId;
+      const value = parseFloat(input.value) || 0;
+      configData.distribucionIdeal[catId].percent = value;
+      await dbPut('config', configData);
+      updateIdealTotal();
+    });
+  });
+}
+
+function updateIdealTotal() {
+  const total = Object.values(configData.distribucionIdeal)
+    .reduce((sum, c) => sum + (c.percent || 0), 0);
+  const el = $('#ideal-total');
+  if (el) {
+    el.textContent = `${total}%`;
+    el.style.color = Math.abs(total - 100) < 1 
+      ? 'var(--color-success-text)' 
+      : 'var(--color-warning-text)';
+  }
+}
+
+// ─── PORTFOLIO FIELDS ───────────────────────────────────
+
+function renderPortfolioFields() {
+  const container = $('#portfolio-fields');
+  if (!container || !portfolioData) return;
+  
+  let html = '<h3 style="font-size:var(--font-size-sm);font-weight:600;margin-bottom:var(--space-3);color:var(--color-text-secondary)">Liquidez</h3>';
+  for (const [key, item] of Object.entries(portfolioData.liquidez)) {
+    html += buildPortfolioField(key, item, 'liquidez');
+  }
+  html += '<h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-4) 0 var(--space-3);color:var(--color-text-secondary)">Inversiones</h3>';
+  for (const [key, item] of Object.entries(portfolioData.inversiones)) {
+    html += buildPortfolioField(key, item, 'inversiones');
+  }
+  
+  container.innerHTML = html;
+  
+  container.querySelectorAll('input[data-portfolio-key]').forEach(input => {
+    input.addEventListener('change', async () => {
+      const section = input.dataset.portfolioSection;
+      const key = input.dataset.portfolioKey;
+      portfolioData[section][key].monto = parseNumber(input.value);
+      await dbPut('portfolio', portfolioData);
+      showToast('Cartera actualizada', 'success');
+    });
+  });
+}
+
+function buildPortfolioField(key, item, section) {
+  const currencyLabel = item.moneda === 'USD' ? 'US$' : '$';
+  return `
+    <div class="form-field" style="margin-bottom:var(--space-2)">
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        <label style="flex:1;font-size:var(--font-size-sm);font-weight:500">
+          ${item.label}
+          ${item.detalle ? `<span class="text-muted" style="font-size:var(--font-size-xs)">(${item.detalle})</span>` : ''}
+        </label>
+        <span style="font-size:var(--font-size-sm);color:var(--color-text-tertiary);width:30px;text-align:right">${currencyLabel}</span>
+        <div style="width:130px">
+          <input class="form-field__input" type="text"
+                 data-portfolio-section="${section}"
+                 data-portfolio-key="${key}"
+                 value="${item.monto || ''}" 
+                 placeholder="0"
+                 style="text-align:right;padding:var(--space-2)" />
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ─── EVENT LISTENERS ────────────────────────────────────
+
+function setupEventListeners() {
+  // Año
+  const yearInput = $('#config-year');
+  if (yearInput) {
+    yearInput.addEventListener('change', async () => {
+      configData.año = parseInt(yearInput.value) || 2026;
+      await dbPut('config', configData);
+      showToast('Año actualizado — recargá la página para ver los cambios', 'success');
+    });
+  }
+  
+  // Dólar manual
+  const dolarInput = $('#config-dolar-manual');
+  if (dolarInput) {
+    dolarInput.addEventListener('change', async () => {
+      const val = dolarInput.value.trim();
+      if (val === '') {
+        await setDolarManual(null);
+        showToast('Override removido, usando API', 'success');
+      } else {
+        const num = parseNumber(val);
+        if (num > 0) {
+          await setDolarManual(num);
+          showToast(`Dólar manual: ${formatDolar(num)}`, 'success');
+        }
+      }
+    });
+  }
+  
+  // Export JSON
+  $('#action-export-json')?.addEventListener('click', async () => {
+    try {
+      const data = await exportAllData();
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `mis-cuentas-backup-${new Date().toISOString().slice(0,10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Backup descargado', 'success');
+    } catch (e) {
+      showToast('Error al exportar', 'error');
+    }
+  });
+  
+  // Import JSON
+  $('#action-import-json')?.addEventListener('click', () => {
+    $('#file-input-json')?.click();
+  });
+  
+  $('#file-input-json')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (confirm('¿Importar estos datos? Se reemplazarán todos los datos actuales.')) {
+        await importAllData(data);
+        showToast('Datos importados correctamente', 'success');
+        window.location.reload();
+      }
+    } catch (err) {
+      showToast('Error al leer el archivo JSON', 'error');
+    }
+    e.target.value = '';
+  });
+  
+  // Import Excel
+  $('#action-import-excel')?.addEventListener('click', () => {
+    $('#file-input-excel')?.click();
+  });
+  
+  $('#file-input-excel')?.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const XLSX = await import('xlsx');
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data, { type: 'array' });
+      
+      const result = parseExcelWorkbook(workbook, XLSX);
+      
+      if (result && confirm(`Se encontraron datos para ${result.mesesEncontrados} meses. ¿Importar?`)) {
+        await applyExcelImport(result);
+        showToast(`Importados ${result.mesesEncontrados} meses desde Excel`, 'success');
+        window.location.reload();
+      }
+    } catch (err) {
+      console.error('Error importando Excel:', err);
+      showToast('Error al importar el Excel: ' + err.message, 'error');
+    }
+    e.target.value = '';
+  });
+  
+  // Export Excel
+  $('#action-export-excel')?.addEventListener('click', async () => {
+    try {
+      showToast('Generando Excel...', 'info');
+      const { exportToExcel } = await import('../services/export.js');
+      await exportToExcel();
+      showToast('Excel descargado', 'success');
+    } catch (err) {
+      console.error('Error exportando Excel:', err);
+      showToast('Error al exportar: ' + err.message, 'error');
+    }
+  });
+  
+  // Export PDF
+  $('#action-export-pdf')?.addEventListener('click', async () => {
+    const mesActual = MESES[new Date().getMonth()];
+    const mes = prompt(`¿Qué mes exportar a PDF? (actual: ${mesActual})`, mesActual);
+    if (!mes) return;
+    try {
+      const { exportToPDF } = await import('../services/export.js');
+      await exportToPDF(mes.toLowerCase().trim());
+    } catch (err) {
+      showToast('Error al generar PDF: ' + err.message, 'error');
+    }
+  });
+  
+  // Portfolio Snapshot
+  $('#action-snapshot')?.addEventListener('click', async () => {
+    const mesActual = MESES[new Date().getMonth()];
+    try {
+      const { takePortfolioSnapshot } = await import('../services/portfolio-history.js');
+      const snap = await takePortfolioSnapshot(mesActual);
+      if (snap) {
+        showToast(`Snapshot de ${mesActual} guardado`, 'success');
+      } else {
+        showToast('Cargá datos de cartera primero', 'warning');
+      }
+    } catch (err) {
+      showToast('Error: ' + err.message, 'error');
+    }
+  });
+}
+
+// ─── EXCEL PARSER ───────────────────────────────────────
+
+function parseExcelWorkbook(workbook, XLSX) {
+  const sheetNames = workbook.SheetNames;
+  let mesesEncontrados = 0;
+  const monthsData = {};
+  let dashboardData = null;
+  
+  for (const sheetName of sheetNames) {
+    const sheet = workbook.Sheets[sheetName];
+    const lower = sheetName.toLowerCase();
+    
+    if (lower.includes('dashboard')) {
+      dashboardData = parseDashboardSheet(sheet, XLSX);
+      continue;
+    }
+    
+    const foundMes = MESES.find(m => lower.includes(m));
+    if (foundMes) {
+      monthsData[foundMes] = parseMonthSheet(sheet, XLSX);
+      mesesEncontrados++;
+    }
+  }
+  
+  return { mesesEncontrados, monthsData, dashboardData };
+}
+
+function parseDashboardSheet(sheet, XLSX) {
+  try {
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    const dolarPorMes = {};
+    const mesShort = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    
+    for (let r = 0; r < jsonData.length; r++) {
+      const row = jsonData[r];
+      for (let c = 0; c < row.length; c++) {
+        const cellStr = String(row[c] || '').toLowerCase().trim();
+        const mesIdx = MESES.findIndex(m => cellStr === m || cellStr.startsWith(m));
+        const mesIdxShort = mesShort.findIndex(m => cellStr === m);
+        const idx = mesIdx >= 0 ? mesIdx : mesIdxShort;
+        
+        if (idx >= 0) {
+          for (let dc = c + 1; dc < Math.min(c + 4, row.length); dc++) {
+            const val = Number(row[dc]);
+            if (val > 100 && val < 100000) {
+              dolarPorMes[MESES[idx]] = val;
+              break;
+            }
+          }
+          break;
+        }
+      }
+    }
+    
+    return { raw: jsonData, dolarPorMes };
+  } catch {
+    return null;
+  }
+}
+
+function parseMonthSheet(sheet, XLSX) {
+  try {
+    const jsonData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+    const egresos = {};
+    const ingresos = [];
+    
+    let currentCatId = null;
+    const catMap = {
+      'hogar y facturas': 1, 'transporte': 2, 'productividad': 3,
+      'crecimiento personal': 4, 'calidad de vida': 5, 'bienestar': 6,
+      'deudas': 7, 'inversión': 8, 'inversion': 8,
+      'generosidad': 9, 'otros': 10,
+    };
+    
+    for (let r = 0; r < jsonData.length; r++) {
+      const row = jsonData[r];
+      const colB = String(row[1] || '').trim();
+      const catKey = colB.toLowerCase();
+      if (catMap[catKey]) {
+        currentCatId = catMap[catKey];
+        if (!egresos[currentCatId]) egresos[currentCatId] = { items: [] };
+        continue;
+      }
+      
+      if (currentCatId && row[2]) {
+        const desc = String(row[2] || '').trim();
+        if (desc && desc !== '' && !desc.toUpperCase().startsWith('TOTAL')) {
+          egresos[currentCatId].items.push({
+            id: generateId(),
+            descripcion: desc,
+            proyectado: parseNumber(String(row[4] || 0)),
+            real: parseNumber(String(row[5] || 0)),
+          });
+        }
+      }
+    }
+    
+    for (let r = 6; r < Math.min(20, jsonData.length); r++) {
+      const row = jsonData[r];
+      const desc = String(row[8] || '').trim();
+      if (desc && desc !== '' && !desc.toUpperCase().includes('TOTAL')) {
+        ingresos.push({
+          id: generateId(),
+          descripcion: desc,
+          proyectado: parseNumber(String(row[9] || 0)),
+          real: parseNumber(String(row[10] || 0)),
+          horasSemanales: String(row[11] || ''),
+          horasMensuales: String(row[12] || ''),
+          horasTotal: String(row[13] || ''),
+        });
+      }
+    }
+    
+    return { egresos, ingresos };
+  } catch (e) {
+    console.error('Error parseando hoja mensual:', e);
+    return null;
+  }
+}
+
+async function applyExcelImport(result) {
+  const año = configData?.año || 2026;
+  const dolarPorMes = result.dashboardData?.dolarPorMes || {};
+  
+  for (const [mesId, data] of Object.entries(result.monthsData)) {
+    if (!data) continue;
+    // Use mesKey for year-aware access
+    const mk = mesKey(mesId, año);
+    const existing = await dbGet('months', mk);
+    if (existing) {
+      if (data.ingresos.length > 0) existing.ingresos = data.ingresos;
+      if (Object.keys(data.egresos).length > 0) existing.egresos = data.egresos;
+      if (dolarPorMes[mesId]) {
+        // saveDolarToMonth muta y escribe el mes (incluye ingresos/egresos ya
+        // aplicados) y sincroniza dolarHistorico en una sola pasada.
+        await saveDolarToMonth(mk, dolarPorMes[mesId], existing);
+      } else {
+        await dbPut('months', existing);
+      }
+    }
+  }
+}

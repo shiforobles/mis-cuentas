@@ -1,0 +1,110 @@
+/* ============================================
+   MIS CUENTAS — Configuración
+   ============================================ */
+
+.settings-view {
+  animation: fadeIn var(--transition-base) ease;
+}
+
+.settings-title {
+  font-size: var(--font-size-xl);
+  font-weight: 800;
+  margin-bottom: var(--space-6);
+}
+
+.settings-group {
+  margin-bottom: var(--space-6);
+}
+
+.settings-group__title {
+  font-size: var(--font-size-md);
+  font-weight: 700;
+  margin-bottom: var(--space-4);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* --- FORM FIELDS --- */
+.form-field {
+  margin-bottom: var(--space-4);
+}
+
+.form-field__label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-2);
+}
+
+.form-field__input {
+  width: 100%;
+  padding: var(--space-3);
+  background: var(--color-bg-input);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  color: var(--color-text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  transition: border-color var(--transition-fast);
+}
+
+.form-field__input:focus {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+.form-field__hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+  margin-top: var(--space-1);
+}
+
+/* --- ACTION LIST --- */
+.action-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.action-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-4);
+  background: var(--color-bg-card);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.action-item:hover {
+  background: var(--color-bg-card-hover);
+  border-color: var(--color-border-light);
+}
+
+.action-item__left {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.action-item__icon {
+  font-size: 1.2rem;
+}
+
+.action-item__text {
+  font-weight: 500;
+}
+
+.action-item__desc {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-tertiary);
+}
+
+.action-item__arrow {
+  color: var(--color-text-muted);
+}
