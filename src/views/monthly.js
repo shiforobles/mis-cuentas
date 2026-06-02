@@ -907,11 +907,48 @@ function updateIngresosTotal() {
 
 /**
  * Guarda los datos del mes en IndexedDB.
+ *
+ * La vista Mes sólo edita campos "proyectado", descripciones y estructura.
+ * Los campos derivados `real` (que son propiedad del sistema de transacciones)
+ * y `dolarCCL` (propiedad del servicio de dólar) NO deben pisarse con la copia
+ * en memoria, que puede estar desactualizada si una transacción o la captura
+ * del dólar promedio se guardaron mientras esta vista estaba abierta.
+ * Por eso, antes de escribir, releemos el mes de la DB y conservamos esos
+ * valores autoritativos.
  */
 async function saveMonthData() {
-  if (monthData && currentMonthKey) {
-    await dbPut('months', monthData);
+  if (!monthData || !currentMonthKey) return;
+
+  const dbMonth = await dbGet('months', currentMonthKey);
+  if (dbMonth) {
+    // Preservar dólar promedio capturado por el servicio de dólar.
+    if (dbMonth.dolarCCL != null) {
+      monthData.dolarCCL = dbMonth.dolarCCL;
+    }
+
+    // Preservar `real` de ingresos (match por id).
+    if (Array.isArray(monthData.ingresos) && Array.isArray(dbMonth.ingresos)) {
+      const realById = new Map(dbMonth.ingresos.map(i => [i.id, i.real]));
+      for (const item of monthData.ingresos) {
+        if (realById.has(item.id)) item.real = realById.get(item.id);
+      }
+    }
+
+    // Preservar `real` de egresos (por categoría, match por id de ítem).
+    if (monthData.egresos && dbMonth.egresos) {
+      for (const catId of Object.keys(monthData.egresos)) {
+        const dbCat = dbMonth.egresos[catId];
+        const memCat = monthData.egresos[catId];
+        if (!dbCat || !Array.isArray(dbCat.items) || !Array.isArray(memCat?.items)) continue;
+        const realById = new Map(dbCat.items.map(i => [i.id, i.real]));
+        for (const item of memCat.items) {
+          if (realById.has(item.id)) item.real = realById.get(item.id);
+        }
+      }
+    }
   }
+
+  await dbPut('months', monthData);
 }
 
 // ─── MODAL DE TRANSACCIONES ──────────────────────────────
