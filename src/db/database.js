@@ -4,6 +4,8 @@
  */
 
 import { openDB } from 'idb';
+import { CARTERA_DEFAULT } from '../utils/constants.js';
+import { deepClone } from '../utils/helpers.js';
 
 const DB_NAME = 'mis-cuentas-db';
 const DB_VERSION = 3;
@@ -180,6 +182,45 @@ export async function importAllData(data) {
   }
   
   await tx.done;
+}
+
+/**
+ * Resetea los datos cargados por el usuario dejando 2026 "en cero", pero
+ * conservando la configuración (categorías, % ideales, año, tema), los ítems
+ * plantilla y los gastos recurrentes.
+ *
+ * - Borra: months, transactions, portfolioHistory.
+ * - Resetea: portfolio → cartera vacía (todo en cero).
+ * - Limpia del config SOLO lo relacionado al dólar (historico, capturas,
+ *   override manual global y por mes).
+ * - Re-siembra los 12 meses con la plantilla (proyectado del template, real: 0).
+ *
+ * @returns {Promise<void>}
+ */
+export async function resetUserData() {
+  const db = await getDB();
+
+  // 1. Borrar stores de datos cargados
+  await db.clear('months');
+  await db.clear('transactions');
+  await db.clear('portfolioHistory');
+
+  // 2. Resetear cartera a cero
+  await db.put('portfolio', deepClone(CARTERA_DEFAULT));
+
+  // 3. Limpiar SOLO los datos de dólar del config (conservar todo lo demás)
+  const config = await db.get('config', 'global');
+  if (config) {
+    config.dolarHistorico = {};
+    config.dolarCapturas = {};
+    config.dolarManualPorMes = {};
+    config.dolarCCLManual = null;
+    await db.put('config', config);
+  }
+
+  // 4. Re-sembrar los 12 meses limpios con la plantilla
+  const { seedDatabase } = await import('./seed.js');
+  await seedDatabase();
 }
 
 // ─── MIGRACIÓN v3: IDs de meses con año ────────────────────

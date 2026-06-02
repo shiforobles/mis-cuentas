@@ -5,7 +5,7 @@
  */
 
 import { dbGet, dbPut, dbGetAll, dbDelete } from '../db/database.js';
-import { getDolarCCL, saveDolarToMonth } from '../services/dollar.js';
+import { getDolarCCL, setDolarManualForMonth, getMonthDolarInfo } from '../services/dollar.js';
 import {
   calcTotalIngresos, calcTotalEgresos, calcSubtotalCategoria,
   calcRestante, calcIngresosUSD, calcDistribucionIdeal, calcTotalHoras
@@ -22,6 +22,7 @@ let currentAño = 2026;
 let monthData = null;
 let configData = null;
 let dolarCCL = 0;
+let dolarInfo = null; // { valor, fuente:'manual'|'promedio'|'estimado', dias }
 let viewMode = 'proyectado'; // 'proyectado' | 'real'
 
 // Debounced save
@@ -42,6 +43,7 @@ export async function renderMonthlyView(mesId) {
   
   monthData = await dbGet('months', currentMonthKey);
   dolarCCL = await getDolarCCL(currentMonthKey);
+  dolarInfo = await getMonthDolarInfo(currentMonthKey);
   
   if (!monthData) {
     main.innerHTML = `<div class="empty-state">
@@ -265,12 +267,26 @@ function renderResult() {
   const restante = calcRestante(totalIngresos, totalEgresos, dolarCCL);
   const isPositive = restante.ars >= 0;
   const formatDolarLocal = (v) => `$${Number(v||0).toLocaleString('es-AR', {minimumFractionDigits:2})}`;
+
+  // Indicador de la fuente del dólar del mes (Cambio 3)
+  let dolarTag = '';
+  let dolarBadge = '';
+  if (dolarInfo?.fuente === 'manual') {
+    dolarTag = 'Valor manual (fijado por vos)';
+    dolarBadge = '<span class="badge badge--warning" style="font-size:9px;padding:1px 5px">manual</span>';
+  } else if (dolarInfo?.fuente === 'promedio') {
+    const n = dolarInfo.dias;
+    dolarTag = `Promedio de ${n} día${n !== 1 ? 's' : ''}`;
+  } else {
+    dolarTag = 'Estimado (sin capturas del mes)';
+  }
   
   container.innerHTML = `
     <div class="result-card">
       <div class="result-card__item">
-        <div class="result-card__label">Dólar CCL</div>
+        <div class="result-card__label" title="${dolarTag}">Dólar CCL ${dolarBadge}</div>
         <div class="result-card__value" style="color:var(--color-info-text);font-size:var(--font-size-lg)">${formatDolarLocal(dolarCCL)}</div>
+        <div class="result-card__sub" style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${dolarTag}</div>
         <button class="btn btn--ghost btn--sm" id="btn-edit-dolar-mes" style="font-size:var(--font-size-xs);padding:2px 8px;margin-top:4px">✏️ Editar</button>
       </div>
       <div class="result-card__item">
@@ -292,17 +308,28 @@ function renderResult() {
     </div>
   `;
 
-  // Edit dolar for this specific month
+  // Override manual del dólar de este mes (Cambio 3)
   $('#btn-edit-dolar-mes')?.addEventListener('click', async () => {
-    const val = prompt(`Dólar CCL para ${MESES_LABEL[MESES.indexOf(currentMonth)]}:`, dolarCCL);
+    const mesLabel = MESES_LABEL[MESES.indexOf(currentMonth)];
+    const actual = dolarInfo?.fuente === 'manual' ? dolarCCL : '';
+    const val = prompt(
+      `Dólar manual para ${mesLabel}\n(vacío = usar el promedio automático del mes):`,
+      actual
+    );
     if (val === null) return;
-    const n = parseNumber(val);
-    if (n > 0) {
-      await saveDolarToMonth(currentMonthKey, n);
-      dolarCCL = n;
-      showToast(`Dólar de ${MESES_LABEL[MESES.indexOf(currentMonth)]}: $${n.toLocaleString('es-AR', {minimumFractionDigits:2})}`, 'success');
-      renderResult();
+    const trimmed = String(val).trim();
+    if (trimmed === '') {
+      await setDolarManualForMonth(currentMonthKey, null);
+      showToast(`${mesLabel}: vuelve al promedio automático`, 'success');
+    } else {
+      const n = parseNumber(val);
+      if (!(n > 0)) return;
+      await setDolarManualForMonth(currentMonthKey, n);
+      showToast(`Dólar manual de ${mesLabel}: $${n.toLocaleString('es-AR', {minimumFractionDigits:2})}`, 'success');
     }
+    dolarCCL = await getDolarCCL(currentMonthKey);
+    dolarInfo = await getMonthDolarInfo(currentMonthKey);
+    renderResult();
   });
 }
 

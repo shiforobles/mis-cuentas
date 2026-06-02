@@ -3,7 +3,7 @@
  * Editar % ideales, categorías, dólar, año, importar/exportar, gastos recurrentes.
  */
 
-import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData } from '../db/database.js';
+import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUserData } from '../db/database.js';
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
 import { formatARS, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
@@ -154,6 +154,17 @@ export async function renderSettings() {
               <div>
                 <div class="action-item__text">Guardar snapshot de cartera</div>
                 <div class="action-item__desc">Registra el estado actual de tu cartera para tracking mensual</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+
+          <div class="action-item action-item--danger" id="action-reset-data">
+            <div class="action-item__left">
+              <span class="action-item__icon">🗑️</span>
+              <div>
+                <div class="action-item__text" style="color:var(--color-danger-text,#ef4444)">Resetear datos</div>
+                <div class="action-item__desc">Borra reales, transacciones, dólar y cartera (deja todo en cero). Conserva categorías, % ideales, plantilla y recurrentes.</div>
               </div>
             </div>
             <span class="action-item__arrow">→</span>
@@ -552,6 +563,32 @@ function setupEventListeners() {
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
+    }
+  });
+
+  // Resetear datos (destructivo, doble confirmación)
+  $('#action-reset-data')?.addEventListener('click', async () => {
+    const ok1 = confirm(
+      '⚠️ RESETEAR DATOS\n\n' +
+      'Esto deja todo EN CERO:\n' +
+      '• Borra los montos reales y transacciones\n' +
+      '• Borra capturas/historial/override del dólar\n' +
+      '• Pone la cartera en cero\n\n' +
+      'Se conservan: categorías, % ideales, ítems plantilla (con su proyectado) y recurrentes.\n\n' +
+      'Esta acción NO se puede deshacer. ¿Continuar?'
+    );
+    if (!ok1) return;
+    const ok2 = confirm('Última confirmación: ¿seguro que querés resetear todos los datos cargados?');
+    if (!ok2) return;
+
+    try {
+      await resetUserData();
+      showToast('Datos reseteados. Todo en cero.', 'success');
+      // Recargar la vista de configuración
+      renderSettings();
+    } catch (err) {
+      console.error('Error reseteando datos:', err);
+      showToast('Error al resetear: ' + err.message, 'error');
     }
   });
 }

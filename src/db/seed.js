@@ -40,6 +40,8 @@ export async function seedDatabase() {
       })),
       mapeoIdealInversion: 'ahorro',
       dolarHistorico: {},
+      dolarCapturas: {},
+      dolarManualPorMes: {},
       theme: 'dark',
       dbMigrated: 3, // New installs start at v3
     };
