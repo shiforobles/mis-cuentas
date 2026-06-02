@@ -255,9 +255,12 @@ async function loadItems(categoryId) {
         monthData.egresos[categoryId].items.push(newItem);
       }
       
-      // We must save monthData immediately so the item exists
-      import('../db/database.js').then(({ dbPut }) => dbPut('months', monthData));
-      
+      // Persistir el ítem ANTES de que se guarde la transacción: si no se
+      // espera (await), recalculateItemReal puede leer el mes sin el ítem y
+      // dejar el "real" en 0 (la transacción queda guardada pero no suma).
+      const { dbPut } = await import('../db/database.js');
+      await dbPut('months', monthData);
+
       flowState.itemId = newItem.id;
       await loadItems(categoryId); // re-render list
       

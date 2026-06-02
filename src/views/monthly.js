@@ -23,7 +23,19 @@ let monthData = null;
 let configData = null;
 let dolarCCL = 0;
 let dolarInfo = null; // { valor, fuente:'manual'|'promedio'|'estimado', dias }
-let viewMode = 'proyectado'; // 'proyectado' | 'real'
+// Modo de la vista. Se recuerda entre recargas (localStorage) y arranca en
+// 'real' para que los gastos cargados se vean de inmediato en los totales
+// (en 'proyectado' el total no refleja lo real y parece que "no suma").
+let viewMode = readViewMode(); // 'proyectado' | 'real'
+
+function readViewMode() {
+  try {
+    const v = localStorage.getItem('misCuentas.viewMode');
+    return v === 'proyectado' || v === 'real' ? v : 'real';
+  } catch {
+    return 'real';
+  }
+}
 
 // Debounced save
 const debouncedSave = debounce(saveMonthData, 500);
@@ -68,10 +80,10 @@ export async function renderMonthlyView(mesId) {
           <div style="display:flex;gap:var(--space-2);align-items:center">
             <button class="btn btn--ghost btn--sm" id="btn-copy-month" title="Copiar desde otro mes">📋</button>
             <div class="toggle-group" id="toggle-mode">
-              <button class="toggle-group__btn toggle-group__btn--active" data-mode="proyectado">
+              <button class="toggle-group__btn ${viewMode === 'proyectado' ? 'toggle-group__btn--active' : ''}" data-mode="proyectado">
                 Proyectado
               </button>
-              <button class="toggle-group__btn" data-mode="real">
+              <button class="toggle-group__btn ${viewMode === 'real' ? 'toggle-group__btn--active' : ''}" data-mode="real">
                 Real
               </button>
             </div>
@@ -245,6 +257,7 @@ function renderToggle() {
   toggle.querySelectorAll('.toggle-group__btn').forEach(btn => {
     btn.addEventListener('click', () => {
       viewMode = btn.dataset.mode;
+      try { localStorage.setItem('misCuentas.viewMode', viewMode); } catch { /* ignore */ }
       toggle.querySelectorAll('.toggle-group__btn').forEach(b => {
         b.classList.toggle('toggle-group__btn--active', b.dataset.mode === viewMode);
       });
