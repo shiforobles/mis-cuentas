@@ -82,6 +82,22 @@ export function generateId() {
 }
 
 /**
+ * Escapa un string para insertarlo de forma segura en HTML
+ * (texto o valores de atributo). Evita romper el markup y XSS
+ * cuando el contenido es editable por el usuario.
+ * @param {*} value
+ * @returns {string}
+ */
+export function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Muestra un toast de notificación.
  * @param {string} message
  * @param {'success'|'error'|'info'} [type='success']

@@ -7,7 +7,7 @@ import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUs
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
 import { formatARS, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
-import { $, showToast, debounce, generateId } from '../utils/helpers.js';
+import { $, showToast, debounce, generateId, escapeHtml } from '../utils/helpers.js';
 
 let configData = null;
 let portfolioData = null;
@@ -84,7 +84,7 @@ export async function renderSettings() {
       <div class="settings-group">
         <h2 class="settings-group__title">💼 Cartera (montos totales)</h2>
         <div class="form-field__hint" style="margin-bottom:var(--space-3)">
-          Cargá los montos totales de tu cartera. Los valores en USD se cargan directamente en dólares.
+          Cargá los montos totales de tu cartera. Podés renombrar conceptos, cambiar la moneda (ARS/US$), agregar y eliminar. Los valores en US$ se cargan directamente en dólares.
         </div>
         <div id="portfolio-fields"></div>
       </div>
@@ -381,50 +381,136 @@ function updateIdealTotal() {
 function renderPortfolioFields() {
   const container = $('#portfolio-fields');
   if (!container || !portfolioData) return;
-  
-  let html = '<h3 style="font-size:var(--font-size-sm);font-weight:600;margin-bottom:var(--space-3);color:var(--color-text-secondary)">Liquidez</h3>';
-  for (const [key, item] of Object.entries(portfolioData.liquidez)) {
-    html += buildPortfolioField(key, item, 'liquidez');
+
+  // Garantizar la forma del objeto (puede faltar una sección tras importar datos viejos)
+  if (!portfolioData.liquidez) portfolioData.liquidez = {};
+  if (!portfolioData.inversiones) portfolioData.inversiones = {};
+
+  container.innerHTML = `
+    ${buildPortfolioSection('liquidez', 'Liquidez')}
+    ${buildPortfolioSection('inversiones', 'Inversiones')}
+  `;
+
+  // La delegación de eventos se conecta UNA sola vez por contenedor.
+  // renderPortfolioFields se vuelve a llamar al agregar/eliminar (solo reescribe
+  // innerHTML; el elemento contenedor persiste), así que re-wirear duplicaría
+  // los listeners y, p.ej., el toggle de moneda se ejecutaría dos veces.
+  if (!container.dataset.pfWired) {
+    wirePortfolioEvents(container);
+    container.dataset.pfWired = '1';
   }
-  html += '<h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-4) 0 var(--space-3);color:var(--color-text-secondary)">Inversiones</h3>';
-  for (const [key, item] of Object.entries(portfolioData.inversiones)) {
-    html += buildPortfolioField(key, item, 'inversiones');
-  }
-  
-  container.innerHTML = html;
-  
-  container.querySelectorAll('input[data-portfolio-key]').forEach(input => {
-    input.addEventListener('change', async () => {
-      const section = input.dataset.portfolioSection;
-      const key = input.dataset.portfolioKey;
-      portfolioData[section][key].monto = parseNumber(input.value);
-      await dbPut('portfolio', portfolioData);
-      showToast('Cartera actualizada', 'success');
-    });
-  });
+}
+
+function buildPortfolioSection(section, title) {
+  const items = Object.entries(portfolioData[section] || {});
+  const rows = items.length
+    ? items.map(([key, item]) => buildPortfolioField(key, item, section)).join('')
+    : `<div class="text-muted" style="font-size:var(--font-size-xs);padding:var(--space-2) 0">Sin conceptos. Agregá uno con el botón de abajo.</div>`;
+  return `
+    <h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-4) 0 var(--space-3);color:var(--color-text-secondary)">${title}</h3>
+    ${rows}
+    <button class="btn btn--ghost" data-pf-add="${section}"
+            style="width:100%;margin-top:var(--space-1);border:1px dashed var(--color-border)">
+      ➕ Agregar concepto
+    </button>
+  `;
 }
 
 function buildPortfolioField(key, item, section) {
-  const currencyLabel = item.moneda === 'USD' ? 'US$' : '$';
+  const isUSD = item.moneda === 'USD';
   return `
-    <div class="form-field" style="margin-bottom:var(--space-2)">
-      <div style="display:flex;align-items:center;gap:var(--space-3)">
-        <label style="flex:1;font-size:var(--font-size-sm);font-weight:500">
-          ${item.label}
-          ${item.detalle ? `<span class="text-muted" style="font-size:var(--font-size-xs)">(${item.detalle})</span>` : ''}
-        </label>
-        <span style="font-size:var(--font-size-sm);color:var(--color-text-tertiary);width:30px;text-align:right">${currencyLabel}</span>
-        <div style="width:130px">
-          <input class="form-field__input" type="text"
-                 data-portfolio-section="${section}"
-                 data-portfolio-key="${key}"
-                 value="${item.monto || ''}" 
-                 placeholder="0"
+    <div class="portfolio-item" data-pf-section="${section}" data-pf-key="${key}"
+         style="display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3);margin-bottom:var(--space-2);border:1px solid var(--color-border);border-radius:var(--radius-md)">
+      <div style="display:flex;align-items:center;gap:var(--space-2)">
+        <input class="form-field__input" type="text" data-pf-field="label"
+               value="${escapeHtml(item.label || '')}" placeholder="Nombre del concepto"
+               style="flex:1;font-weight:500;padding:var(--space-2)" />
+        <button class="btn btn--ghost btn--icon" data-pf-action="delete" title="Eliminar concepto"
+                aria-label="Eliminar concepto" style="color:var(--color-danger-text);flex:0 0 auto">✕</button>
+      </div>
+      <div style="display:flex;align-items:center;gap:var(--space-2)">
+        <input class="form-field__input" type="text" data-pf-field="detalle"
+               value="${escapeHtml(item.detalle || '')}" placeholder="Detalle (opcional)"
+               style="flex:1;font-size:var(--font-size-xs);padding:var(--space-2)" />
+        <button class="btn btn--ghost" data-pf-action="currency" title="Cambiar moneda"
+                style="flex:0 0 auto;min-width:56px;padding:var(--space-2)">${isUSD ? 'US$' : 'ARS $'}</button>
+        <div style="width:120px">
+          <input class="form-field__input" type="text" data-pf-field="monto"
+                 value="${item.monto || ''}" placeholder="0"
                  style="text-align:right;padding:var(--space-2)" />
         </div>
       </div>
     </div>
   `;
+}
+
+/** Guarda la cartera en la DB. */
+async function savePortfolio() {
+  await dbPut('portfolio', portfolioData);
+}
+
+/** Conecta los eventos (delegación) de la sección de cartera editable. */
+function wirePortfolioEvents(container) {
+  // Edición de campos de texto (label, detalle, monto) — guardar al salir del campo.
+  container.addEventListener('change', async (e) => {
+    const input = e.target.closest('input[data-pf-field]');
+    if (!input) return;
+    const row = input.closest('.portfolio-item');
+    if (!row) return;
+    const { pfSection: section, pfKey: key } = row.dataset;
+    const item = portfolioData[section]?.[key];
+    if (!item) return;
+
+    const field = input.dataset.pfField;
+    if (field === 'monto') {
+      item.monto = parseNumber(input.value);
+    } else if (field === 'label') {
+      item.label = input.value.trim();
+    } else if (field === 'detalle') {
+      const v = input.value.trim();
+      if (v) item.detalle = v; else delete item.detalle;
+    }
+    await savePortfolio();
+    showToast('Cartera actualizada', 'success');
+  });
+
+  // Botones: moneda, eliminar, agregar.
+  container.addEventListener('click', async (e) => {
+    const addBtn = e.target.closest('[data-pf-add]');
+    if (addBtn) {
+      const section = addBtn.dataset.pfAdd;
+      const newKey = generateId();
+      portfolioData[section][newKey] = { monto: 0, moneda: 'ARS', label: '' };
+      await savePortfolio();
+      renderPortfolioFields();
+      // Enfocar el label del nuevo concepto.
+      const newRow = container.querySelector(`.portfolio-item[data-pf-key="${newKey}"] input[data-pf-field="label"]`);
+      newRow?.focus();
+      return;
+    }
+
+    const actionBtn = e.target.closest('[data-pf-action]');
+    if (!actionBtn) return;
+    const row = actionBtn.closest('.portfolio-item');
+    if (!row) return;
+    const { pfSection: section, pfKey: key } = row.dataset;
+    const item = portfolioData[section]?.[key];
+    if (!item) return;
+
+    if (actionBtn.dataset.pfAction === 'currency') {
+      item.moneda = item.moneda === 'USD' ? 'ARS' : 'USD';
+      actionBtn.textContent = item.moneda === 'USD' ? 'US$' : 'ARS $';
+      await savePortfolio();
+      showToast('Moneda actualizada', 'success');
+    } else if (actionBtn.dataset.pfAction === 'delete') {
+      const nombre = item.label || 'este concepto';
+      if (!confirm(`¿Eliminar "${nombre}" de la cartera?`)) return;
+      delete portfolioData[section][key];
+      await savePortfolio();
+      renderPortfolioFields();
+      showToast('Concepto eliminado', 'success');
+    }
+  });
 }
 
 // ─── EVENT LISTENERS ────────────────────────────────────
