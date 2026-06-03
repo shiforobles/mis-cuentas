@@ -93,6 +93,12 @@ export async function renderSettings() {
           Definí tu objetivo de cartera. El dashboard te avisa si te desviás más de 5 puntos.
         </div>
         <div id="portfolio-targets"></div>
+
+        <h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-5) 0 var(--space-2);color:var(--color-text-secondary)">🛡️ Fondo de emergencia</h3>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Elegí qué concepto de Liquidez es tu fondo. El dashboard te muestra cuántos meses de gastos cubre (objetivo: 3 meses).
+        </div>
+        <div id="portfolio-emergencia"></div>
       </div>
       
       <!-- Importar / Exportar -->
@@ -187,6 +193,7 @@ export async function renderSettings() {
   renderIdealPercentages();
   renderPortfolioFields();
   renderPortfolioTargets();
+  renderEmergenciaSelector();
   renderRecurringList();
   setupEventListeners();
 }
@@ -478,6 +485,8 @@ function wirePortfolioEvents(container) {
       if (v) item.detalle = v; else delete item.detalle;
     }
     await savePortfolio();
+    // Si se renombró un concepto de liquidez, refrescar el selector de fondo.
+    if (field === 'label' && section === 'liquidez') renderEmergenciaSelector();
     showToast('Cartera actualizada', 'success');
   });
 
@@ -490,6 +499,7 @@ function wirePortfolioEvents(container) {
       portfolioData[section][newKey] = { monto: 0, moneda: 'ARS', label: '' };
       await savePortfolio();
       renderPortfolioFields();
+      renderEmergenciaSelector();
       // Enfocar el label del nuevo concepto.
       const newRow = container.querySelector(`.portfolio-item[data-pf-key="${newKey}"] input[data-pf-field="label"]`);
       newRow?.focus();
@@ -513,8 +523,11 @@ function wirePortfolioEvents(container) {
       const nombre = item.label || 'este concepto';
       if (!confirm(`¿Eliminar "${nombre}" de la cartera?`)) return;
       delete portfolioData[section][key];
+      // Si era el fondo de emergencia designado, limpiar la referencia.
+      if (portfolioData.emergenciaKey === key) portfolioData.emergenciaKey = null;
       await savePortfolio();
       renderPortfolioFields();
+      renderEmergenciaSelector();
       showToast('Concepto eliminado', 'success');
     }
   });
@@ -573,6 +586,34 @@ function buildTargetField(key, label, value, complementHtml) {
       <div class="text-muted" style="font-size:var(--font-size-xs);margin-top:var(--space-1);text-align:right">${complementHtml}</div>
     </div>
   `;
+}
+
+// ─── FONDO DE EMERGENCIA (SELECTOR) ─────────────────────
+
+function renderEmergenciaSelector() {
+  const container = $('#portfolio-emergencia');
+  if (!container || !portfolioData) return;
+
+  const current = portfolioData.emergenciaKey || '';
+  const opciones = Object.entries(portfolioData.liquidez || {})
+    .map(([key, item]) => `<option value="${escapeHtml(key)}" ${key === current ? 'selected' : ''}>${escapeHtml(item.label || '(sin nombre)')}</option>`)
+    .join('');
+
+  container.innerHTML = `
+    <div class="form-field">
+      <select class="form-field__input" id="emergencia-select" style="padding:var(--space-2)">
+        <option value="" ${current === '' ? 'selected' : ''}>— Ninguno —</option>
+        ${opciones}
+      </select>
+    </div>
+  `;
+
+  const select = $('#emergencia-select', container);
+  select?.addEventListener('change', async () => {
+    portfolioData.emergenciaKey = select.value || null;
+    await savePortfolio();
+    showToast('Fondo de emergencia actualizado', 'success');
+  });
 }
 
 // ─── EVENT LISTENERS ────────────────────────────────────

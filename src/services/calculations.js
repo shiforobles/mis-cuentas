@@ -243,6 +243,69 @@ export function calcCartera(portfolio, dolarCCL) {
 /** Umbral de desvío (en puntos porcentuales) para disparar la alerta de rebalanceo. */
 export const REBALANCE_THRESHOLD_PP = 5;
 
+/** Meses de gastos objetivo para el fondo de emergencia. */
+export const EMERGENCIA_MESES_OBJETIVO = 3;
+
+/**
+ * Promedio de gasto mensual a partir de los meses con datos.
+ * Usa egresos reales si hay; si no, cae a proyectado.
+ * @param {Array} meses - array de documentos de mes (puede tener nulls)
+ * @returns {{ promedioARS: number, modo: 'real'|'proyectado', mesesConDatos: number }}
+ */
+export function calcGastoMensualPromedio(meses) {
+  let sumReal = 0, nReal = 0, sumProy = 0, nProy = 0;
+  for (const m of meses || []) {
+    if (!m) continue;
+    const real = calcTotalEgresos(m.egresos, 'real');
+    const proy = calcTotalEgresos(m.egresos, 'proyectado');
+    if (real > 0) { sumReal += real; nReal++; }
+    if (proy > 0) { sumProy += proy; nProy++; }
+  }
+  if (nReal > 0) return { promedioARS: sumReal / nReal, modo: 'real', mesesConDatos: nReal };
+  if (nProy > 0) return { promedioARS: sumProy / nProy, modo: 'proyectado', mesesConDatos: nProy };
+  return { promedioARS: 0, modo: 'real', mesesConDatos: 0 };
+}
+
+/**
+ * Calcula la cobertura del fondo de emergencia en meses de gasto.
+ * El concepto se identifica por `portfolio.emergenciaKey` dentro de liquidez.
+ * @param {object} portfolio
+ * @param {Array} meses
+ * @param {number} dolarCCL
+ * @returns {object|null}
+ */
+export function calcFondoEmergencia(portfolio, meses, dolarCCL) {
+  if (!portfolio) return null;
+  const key = portfolio.emergenciaKey;
+  const item = key ? portfolio.liquidez?.[key] : null;
+  if (!item) return { configurado: false };
+
+  const montoOriginal = Number(item.monto) || 0;
+  const fondoARS = item.moneda === 'USD' ? montoOriginal * dolarCCL : montoOriginal;
+  const fondoUSD = item.moneda === 'USD' ? montoOriginal : safeDivide(fondoARS, dolarCCL);
+
+  const gasto = calcGastoMensualPromedio(meses);
+  const mesesCubiertos = gasto.promedioARS > 0 ? fondoARS / gasto.promedioARS : null;
+  const objetivoMeses = EMERGENCIA_MESES_OBJETIVO;
+  const objetivoARS = gasto.promedioARS * objetivoMeses;
+  const faltanteARS = Math.max(0, objetivoARS - fondoARS);
+
+  return {
+    configurado: true,
+    label: item.label,
+    fondoARS,
+    fondoUSD,
+    gastoMensualARS: gasto.promedioARS,
+    gastoModo: gasto.modo,
+    mesesConDatos: gasto.mesesConDatos,
+    mesesCubiertos,
+    objetivoMeses,
+    objetivoARS,
+    faltanteARS,
+    alcanza: mesesCubiertos != null && mesesCubiertos >= objetivoMeses,
+  };
+}
+
 /** Objetivos por defecto si la cartera no tiene `targets` configurados. */
 export const TARGETS_DEFAULT = { liquidezPct: 30, usdPct: 50 };
 

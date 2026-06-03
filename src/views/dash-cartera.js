@@ -2,8 +2,8 @@
  * Dashboard Tab 2 — CARTERA / INVERSIONES
  * Tabla cartera desglosada + torta total + dona inversiones.
  */
-import { portfolioData, dolarCCL, chartInstances, getChartDefaults } from './dashboard.js';
-import { calcCartera, calcRebalanceo } from '../services/calculations.js';
+import { portfolioData, dolarCCL, chartInstances, getChartDefaults, allMonths } from './dashboard.js';
+import { calcCartera, calcRebalanceo, calcFondoEmergencia } from '../services/calculations.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
 
 export function renderTabCartera(panel) {
@@ -15,6 +15,7 @@ export function renderTabCartera(panel) {
   if (!c) return;
 
   const reb = calcRebalanceo(c.totals, portfolioData.targets, dolarCCL);
+  const fe = calcFondoEmergencia(portfolioData, allMonths, dolarCCL);
 
   panel.innerHTML = `
     <div class="card section">
@@ -24,6 +25,8 @@ export function renderTabCartera(panel) {
         <span class="portfolio-total__usd">${formatUSD(c.totals.granTotalUSD)}</span>
       </div>
     </div>
+
+    ${buildEmergenciaCard(fe)}
 
     ${buildRebalanceCard(reb)}
 
@@ -91,6 +94,66 @@ export function renderTabCartera(panel) {
       });
     }
   }).catch(e => console.error('Chart.js error:', e));
+}
+
+/**
+ * Construye la tarjeta del Fondo de emergencia (meses de gasto cubiertos).
+ * @param {object|null} fe - resultado de calcFondoEmergencia
+ * @returns {string} HTML
+ */
+function buildEmergenciaCard(fe) {
+  const titulo = `<h3 class="card__title"><span class="card__title-icon">🛡️</span> Fondo de emergencia</h3>`;
+
+  if (!fe || fe.configurado === false) {
+    return `
+      <div class="card section">
+        ${titulo}
+        <div class="text-muted" style="font-size:var(--font-size-sm)">Elegí qué concepto es tu fondo de emergencia en Configuración para ver cuántos meses de gastos cubre.</div>
+      </div>`;
+  }
+
+  const okColor = 'var(--color-success-text, #16a34a)';
+  const warnColor = 'var(--color-warning-text, #d97706)';
+
+  // Sin datos de gasto todavía.
+  if (fe.mesesCubiertos == null) {
+    return `
+      <div class="card section">
+        ${titulo}
+        <div style="font-size:var(--font-size-sm);margin-bottom:var(--space-1)"><strong>${fe.label}</strong>: ${formatARS(fe.fondoARS)} <span class="text-muted">(${formatUSD(fe.fondoUSD)})</span></div>
+        <div class="text-muted" style="font-size:var(--font-size-xs)">Cargá gastos en tus meses para calcular cuántos meses cubre.</div>
+      </div>`;
+  }
+
+  const meses = fe.mesesCubiertos;
+  const mesesTxt = meses.toLocaleString('es-AR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const pctMeta = Math.min(100, (meses / fe.objetivoMeses) * 100);
+  const color = fe.alcanza ? okColor : warnColor;
+  const estado = fe.alcanza
+    ? `Cubierto (objetivo ${fe.objetivoMeses} meses) ✓`
+    : `Por debajo del objetivo de ${fe.objetivoMeses} meses`;
+
+  const alerta = !fe.alcanza ? `
+    <div style="margin-top:var(--space-2);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);background:var(--color-warning-bg, rgba(217,119,6,.12));border:1px solid ${warnColor};font-size:var(--font-size-xs);color:var(--color-text-secondary)">
+      Para llegar a ${fe.objetivoMeses} meses te falta sumar <strong>${formatARS(fe.faltanteARS)}</strong> al fondo.
+    </div>` : '';
+
+  return `
+    <div class="card section">
+      ${titulo}
+      <div style="display:flex;align-items:baseline;justify-content:space-between;margin-bottom:var(--space-1)">
+        <span style="font-size:var(--font-size-xl, 1.5rem);font-weight:700;color:${color}">${mesesTxt} meses</span>
+        <span style="font-size:var(--font-size-sm)" class="text-muted">${formatARS(fe.fondoARS)}</span>
+      </div>
+      <div style="position:relative;height:8px;background:var(--color-bg-tertiary, rgba(255,255,255,.08));border-radius:999px;overflow:hidden;margin-bottom:var(--space-2)">
+        <div style="position:absolute;inset:0 auto 0 0;width:${pctMeta}%;background:${color};border-radius:999px"></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:var(--font-size-xs)">
+        <span style="color:${color};font-weight:600">${estado}</span>
+        <span class="text-muted">Gasto ${fe.gastoModo}: ${formatARS(fe.gastoMensualARS)}/mes</span>
+      </div>
+      ${alerta}
+    </div>`;
 }
 
 /**

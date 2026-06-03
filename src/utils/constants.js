@@ -175,6 +175,8 @@ export const CARTERA_DEFAULT = {
   // Asignación objetivo para la alerta de rebalanceo.
   // inversionesPct = 100 - liquidezPct ; arsPct = 100 - usdPct
   targets: { liquidezPct: 30, usdPct: 50 },
+  // Concepto de liquidez que cuenta como fondo de emergencia (cobertura en meses).
+  emergenciaKey: 'fondoEmergencia',
 };
 
 /** Año por defecto */
