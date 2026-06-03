@@ -3,7 +3,7 @@
  * Tabla cartera desglosada + torta total + dona inversiones.
  */
 import { portfolioData, dolarCCL, chartInstances, getChartDefaults } from './dashboard.js';
-import { calcCartera } from '../services/calculations.js';
+import { calcCartera, calcRebalanceo } from '../services/calculations.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
 
 export function renderTabCartera(panel) {
@@ -14,6 +14,8 @@ export function renderTabCartera(panel) {
   const c = calcCartera(portfolioData, dolarCCL);
   if (!c) return;
 
+  const reb = calcRebalanceo(c.totals, portfolioData.targets, dolarCCL);
+
   panel.innerHTML = `
     <div class="card section">
       <div class="portfolio-total">
@@ -22,6 +24,8 @@ export function renderTabCartera(panel) {
         <span class="portfolio-total__usd">${formatUSD(c.totals.granTotalUSD)}</span>
       </div>
     </div>
+
+    ${buildRebalanceCard(reb)}
 
     <div class="card section">
       <h3 class="card__title"><span class="card__title-icon">💧</span> Liquidez — ${formatARS(c.totals.liquidezARS)} / ${formatUSD(c.totals.liquidezUSD)}</h3>
@@ -87,4 +91,70 @@ export function renderTabCartera(panel) {
       });
     }
   }).catch(e => console.error('Chart.js error:', e));
+}
+
+/**
+ * Construye la tarjeta de Asignación objetivo + alerta de rebalanceo.
+ * @param {object|null} reb - resultado de calcRebalanceo
+ * @returns {string} HTML
+ */
+function buildRebalanceCard(reb) {
+  if (!reb) {
+    return `
+      <div class="card section">
+        <h3 class="card__title"><span class="card__title-icon">🎯</span> Asignación objetivo</h3>
+        <div class="text-muted" style="font-size:var(--font-size-sm)">Cargá montos en tu cartera para ver el rebalanceo.</div>
+      </div>`;
+  }
+
+  return `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">🎯</span> Asignación objetivo</h3>
+      ${buildRebalanceDim('Bloques', reb.bloque)}
+      <div style="height:var(--space-3)"></div>
+      ${buildRebalanceDim('Moneda', reb.moneda)}
+    </div>`;
+}
+
+/** Renderiza una dimensión (bloques o moneda) con sus dos lados, barra y alerta. */
+function buildRebalanceDim(titulo, dim) {
+  const dev = Math.round(Math.abs(dim.devPp));
+  const okColor = 'var(--color-success-text, #16a34a)';
+  const warnColor = 'var(--color-warning-text, #d97706)';
+  const estadoColor = dim.alerta ? warnColor : okColor;
+  const estadoTxt = dim.alerta ? `${dev} pp fuera` : 'En objetivo';
+
+  const sideRow = (s) => {
+    const cur = Math.round(s.curPct);
+    const tgt = Math.round(s.tgtPct);
+    return `
+      <div style="margin-bottom:var(--space-2)">
+        <div style="display:flex;justify-content:space-between;font-size:var(--font-size-sm);margin-bottom:4px">
+          <span>${s.label}</span>
+          <span><strong>${cur}%</strong> <span class="text-muted">/ obj ${tgt}%</span></span>
+        </div>
+        <div style="position:relative;height:6px;background:var(--color-bg-tertiary, rgba(255,255,255,.08));border-radius:999px;overflow:hidden">
+          <div style="position:absolute;inset:0 auto 0 0;width:${Math.min(100, cur)}%;background:var(--color-info-text, #3b82f6);border-radius:999px"></div>
+          <div style="position:absolute;top:-2px;bottom:-2px;left:${Math.min(100, tgt)}%;width:2px;background:var(--color-text-secondary)"></div>
+        </div>
+      </div>`;
+  };
+
+  const alerta = dim.alerta ? `
+    <div style="margin-top:var(--space-2);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);background:var(--color-warning-bg, rgba(217,119,6,.12));border:1px solid ${warnColor};font-size:var(--font-size-xs);color:var(--color-text-secondary)">
+      Tenés exceso en <strong>${dim.origen}</strong>. Para volver al objetivo, mové
+      <strong>${formatARS(dim.ajusteARS)}</strong> (${formatUSD(dim.ajusteUSD)})
+      de <strong>${dim.origen}</strong> a <strong>${dim.destino}</strong>.
+    </div>` : '';
+
+  return `
+    <div>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:var(--space-2)">
+        <span style="font-size:var(--font-size-xs);font-weight:600;text-transform:uppercase;letter-spacing:.04em;color:var(--color-text-tertiary)">${titulo}</span>
+        <span style="font-size:var(--font-size-xs);font-weight:600;color:${estadoColor}">${estadoTxt}</span>
+      </div>
+      ${sideRow(dim.a)}
+      ${sideRow(dim.b)}
+      ${alerta}
+    </div>`;
 }

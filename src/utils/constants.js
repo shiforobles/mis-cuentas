@@ -171,7 +171,10 @@ export const CARTERA_DEFAULT = {
     cedears: { monto: 0, moneda: 'ARS', label: 'Acciones / CEDEARs' },
     bonos: { monto: 0, moneda: 'ARS', label: 'Bonos / ON' },
     cripto: { monto: 0, moneda: 'ARS', label: 'Cripto' },
-  }
+  },
+  // Asignación objetivo para la alerta de rebalanceo.
+  // inversionesPct = 100 - liquidezPct ; arsPct = 100 - usdPct
+  targets: { liquidezPct: 30, usdPct: 50 },
 };
 
 /** Año por defecto */

@@ -87,6 +87,12 @@ export async function renderSettings() {
           Cargá los montos totales de tu cartera. Podés renombrar conceptos, cambiar la moneda (ARS/US$), agregar y eliminar. Los valores en US$ se cargan directamente en dólares.
         </div>
         <div id="portfolio-fields"></div>
+
+        <h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-5) 0 var(--space-2);color:var(--color-text-secondary)">🎯 Asignación objetivo</h3>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Definí tu objetivo de cartera. El dashboard te avisa si te desviás más de 5 puntos.
+        </div>
+        <div id="portfolio-targets"></div>
       </div>
       
       <!-- Importar / Exportar -->
@@ -180,6 +186,7 @@ export async function renderSettings() {
   
   renderIdealPercentages();
   renderPortfolioFields();
+  renderPortfolioTargets();
   renderRecurringList();
   setupEventListeners();
 }
@@ -511,6 +518,61 @@ function wirePortfolioEvents(container) {
       showToast('Concepto eliminado', 'success');
     }
   });
+}
+
+// ─── ASIGNACIÓN OBJETIVO (REBALANCEO) ───────────────────
+
+function renderPortfolioTargets() {
+  const container = $('#portfolio-targets');
+  if (!container || !portfolioData) return;
+
+  if (!portfolioData.targets) portfolioData.targets = { liquidezPct: 30, usdPct: 50 };
+  const t = portfolioData.targets;
+  const liq = Number(t.liquidezPct) || 0;
+  const usd = Number(t.usdPct) || 0;
+
+  container.innerHTML = `
+    ${buildTargetField('liquidezPct', 'Liquidez objetivo', liq, `Inversiones: <strong id="tgt-comp-liquidez">${100 - liq}%</strong>`)}
+    ${buildTargetField('usdPct', 'USD objetivo', usd, `ARS: <strong id="tgt-comp-usd">${100 - usd}%</strong>`)}
+  `;
+
+  if (!container.dataset.wired) {
+    container.addEventListener('change', async (e) => {
+      const input = e.target.closest('input[data-target-key]');
+      if (!input) return;
+      const key = input.dataset.targetKey;
+      let val = parseInt(input.value, 10);
+      if (!isFinite(val)) val = 0;
+      val = Math.min(100, Math.max(0, val));
+      input.value = val;
+      if (!portfolioData.targets) portfolioData.targets = {};
+      portfolioData.targets[key] = val;
+      await savePortfolio();
+      // Actualizar el complemento mostrado.
+      const compId = key === 'liquidezPct' ? 'tgt-comp-liquidez' : 'tgt-comp-usd';
+      const comp = document.getElementById(compId);
+      if (comp) comp.textContent = `${100 - val}%`;
+      showToast('Objetivo actualizado', 'success');
+    });
+    container.dataset.wired = '1';
+  }
+}
+
+function buildTargetField(key, label, value, complementHtml) {
+  return `
+    <div class="form-field" style="margin-bottom:var(--space-3)">
+      <div style="display:flex;align-items:center;gap:var(--space-3)">
+        <label style="flex:1;font-size:var(--font-size-sm);font-weight:500">${label}</label>
+        <div style="width:90px;display:flex;align-items:center;gap:var(--space-1)">
+          <input class="form-field__input" type="number" min="0" max="100" step="5"
+                 data-target-key="${key}" value="${value}"
+                 style="text-align:right;padding:var(--space-2)" />
+          <span style="color:var(--color-text-tertiary)">%</span>
+        </div>
+      </div>
+      <div class="text-muted" style="font-size:var(--font-size-xs);margin-top:var(--space-1);text-align:right">${complementHtml}</div>
+    </div>
+  `;
 }
 
 // ─── EVENT LISTENERS ────────────────────────────────────

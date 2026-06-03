@@ -160,44 +160,52 @@ export function calcCartera(portfolio, dolarCCL) {
   if (!portfolio) return null;
   
   const result = { liquidez: {}, inversiones: {}, totals: {} };
-  
+
+  // Exposición por moneda (valor en ARS de lo denominado en cada moneda).
+  let exposicionARS = 0; // valor de holdings en pesos
+  let exposicionUSD = 0; // valor (en ARS) de holdings en dólares
+
   // Calcular cada línea de liquidez
   let totalLiquidezARS = 0;
   let totalLiquidezUSD = 0;
-  
+
   for (const [key, item] of Object.entries(portfolio.liquidez || {})) {
     const montoOriginal = Number(item.monto) || 0;
     let ars, usd;
-    
+
     if (item.moneda === 'USD') {
       usd = montoOriginal;
       ars = montoOriginal * dolarCCL;
+      exposicionUSD += ars;
     } else {
       ars = montoOriginal;
       usd = safeDivide(ars, dolarCCL);
+      exposicionARS += ars;
     }
-    
+
     result.liquidez[key] = { ...item, ars, usd, montoOriginal };
     totalLiquidezARS += ars;
     totalLiquidezUSD += usd;
   }
-  
+
   // Calcular inversiones
   let totalInversionesARS = 0;
   let totalInversionesUSD = 0;
-  
+
   for (const [key, item] of Object.entries(portfolio.inversiones || {})) {
     const montoOriginal = Number(item.monto) || 0;
     let ars, usd;
-    
+
     if (item.moneda === 'USD') {
       usd = montoOriginal;
       ars = montoOriginal * dolarCCL;
+      exposicionUSD += ars;
     } else {
       ars = montoOriginal;
       usd = safeDivide(ars, dolarCCL);
+      exposicionARS += ars;
     }
-    
+
     result.inversiones[key] = { ...item, ars, usd, montoOriginal };
     totalInversionesARS += ars;
     totalInversionesUSD += usd;
@@ -225,9 +233,69 @@ export function calcCartera(portfolio, dolarCCL) {
     inversionesUSD: totalInversionesUSD,
     granTotalARS,
     granTotalUSD,
+    exposicionARS,
+    exposicionUSD,
   };
-  
+
   return result;
+}
+
+/** Umbral de desvío (en puntos porcentuales) para disparar la alerta de rebalanceo. */
+export const REBALANCE_THRESHOLD_PP = 5;
+
+/** Objetivos por defecto si la cartera no tiene `targets` configurados. */
+export const TARGETS_DEFAULT = { liquidezPct: 30, usdPct: 50 };
+
+/**
+ * Compara la asignación actual de la cartera contra los objetivos y
+ * calcula desvíos y montos a mover para rebalancear.
+ *
+ * Dos dimensiones independientes:
+ *  - bloque: Liquidez vs Inversiones (sobre el gran total)
+ *  - moneda: ARS vs USD (exposición, sobre el gran total)
+ *
+ * @param {object} totals - result.totals de calcCartera
+ * @param {{ liquidezPct?: number, usdPct?: number }} targets
+ * @param {number} dolarCCL - para expresar el ajuste también en USD
+ * @returns {object|null}
+ */
+export function calcRebalanceo(totals, targets, dolarCCL) {
+  if (!totals) return null;
+  const gt = totals.granTotalARS || 0;
+  if (gt <= 0) return null;
+
+  const t = { ...TARGETS_DEFAULT, ...(targets || {}) };
+  const clamp = (v, def) => {
+    const n = Number(v);
+    if (!isFinite(n)) return def;
+    return Math.min(100, Math.max(0, n));
+  };
+
+  const buildDim = (curAARS, curBARS, tgtAPct, labelA, labelB) => {
+    const curAPct = (curAARS / gt) * 100;
+    const curBPct = (curBARS / gt) * 100;
+    const tgtA = clamp(tgtAPct, 50);
+    const tgtB = 100 - tgtA;
+    const devPp = curAPct - tgtA; // + = exceso en A, faltante en B
+    const ajusteARS = (Math.abs(devPp) / 100) * gt;
+    return {
+      a: { label: labelA, curPct: curAPct, tgtPct: tgtA, curARS: curAARS },
+      b: { label: labelB, curPct: curBPct, tgtPct: tgtB, curARS: curBARS },
+      devPp,
+      alerta: Math.abs(devPp) >= REBALANCE_THRESHOLD_PP,
+      // Lado con exceso → mover hacia el otro
+      origen: devPp > 0 ? labelA : labelB,
+      destino: devPp > 0 ? labelB : labelA,
+      ajusteARS,
+      ajusteUSD: safeDivide(ajusteARS, dolarCCL),
+    };
+  };
+
+  return {
+    threshold: REBALANCE_THRESHOLD_PP,
+    bloque: buildDim(totals.liquidezARS, totals.inversionesARS, t.liquidezPct, 'Liquidez', 'Inversiones'),
+    moneda: buildDim(totals.exposicionUSD, totals.exposicionARS, t.usdPct, 'USD', 'ARS'),
+  };
 }
 
 // ─── 9-10. TOTAL ANUAL Y PROMEDIO ───────────────────────
