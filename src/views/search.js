@@ -171,6 +171,7 @@ function buildSearchIndex(allMonths, allTx, año) {
         amount, proyectado: item.proyectado || 0,
         txCount: txs.length,
         notes: txs.map(t => t.note).filter(Boolean),
+        loadedAt: itemLoadedAt(txs),
       });
     }
 
@@ -189,12 +190,31 @@ function buildSearchIndex(allMonths, allTx, año) {
           amount, proyectado: item.proyectado || 0,
           txCount: txs.length,
           notes: txs.map(t => t.note).filter(Boolean),
+          loadedAt: itemLoadedAt(txs),
         });
       }
     }
   }
 
   return index;
+}
+
+/**
+ * Timestamp de "orden de carga" de una fila de búsqueda (un ítem de movimiento):
+ * la transacción más reciente cargada en ese ítem (lo último que registró el
+ * usuario ahí). Devuelve 0 si el ítem no tiene transacciones — esas filas son
+ * solo proyectadas (nunca se cargó un movimiento) y van debajo de todo lo
+ * cargado (ver sortResults), sin competir con los movimientos reales.
+ * @param {Array<{createdAt?: string, date?: string}>} txs
+ * @returns {number} milisegundos epoch, o 0 si no hay transacciones
+ */
+function itemLoadedAt(txs) {
+  let max = 0;
+  for (const t of txs) {
+    const ts = Date.parse(t.createdAt || t.date || '');
+    if (!isNaN(ts) && ts > max) max = ts;
+  }
+  return max;
 }
 
 function filterResults(index, filters) {
@@ -213,6 +233,41 @@ function filterResults(index, filters) {
   });
 }
 
+/**
+ * Modo de orden de los resultados de Buscar.
+ * Por ahora único: 'carga' (lo último cargado, arriba). La estructura queda
+ * lista para sumar 'fecha' / 'monto' con un selector en el futuro, sin tocar
+ * el resto de la vista.
+ */
+const SORT_MODE = 'carga';
+
+/**
+ * Ordena (in place) los resultados según el modo activo.
+ * @param {Array} results
+ * @param {'carga'|'fecha'|'monto'} [mode=SORT_MODE]
+ */
+function sortResults(results, mode = SORT_MODE) {
+  switch (mode) {
+    case 'monto':
+      results.sort((a, b) => (b.amount || b.proyectado) - (a.amount || a.proyectado));
+      break;
+    case 'fecha':
+      results.sort((a, b) => b.mesIdx - a.mesIdx);
+      break;
+    case 'carga':
+    default:
+      // 1º las filas con movimientos cargados (lo último arriba), 2º las solo
+      // proyectadas (sin carga) debajo, ordenadas por mes reciente y monto.
+      results.sort((a, b) =>
+        (b.loadedAt > 0) - (a.loadedAt > 0) ||
+        (b.loadedAt - a.loadedAt) ||
+        (b.mesIdx - a.mesIdx) ||
+        (b.amount || b.proyectado) - (a.amount || a.proyectado)
+      );
+      break;
+  }
+}
+
 function renderResults(results) {
   const container = $('#search-results');
   const summary = $('#search-summary');
@@ -227,7 +282,7 @@ function renderResults(results) {
     return;
   }
 
-  results.sort((a, b) => (b.amount || b.proyectado) - (a.amount || a.proyectado));
+  sortResults(results);
   const displayed = results.slice(0, 100);
 
   container.innerHTML = `<div class="search-results-list">

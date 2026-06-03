@@ -13,13 +13,17 @@ import { $, showToast, generateId } from '../utils/helpers.js';
 let currentMonthKey = null;
 let monthData = null;
 
+/** Categoría "Inversión" (ver CATEGORIAS_EGRESO en constants.js). */
+const CATEGORIA_INVERSION_ID = 8;
+
 let flowState = {
   type: null, // 'egreso' | 'ingreso'
   step: 0,    // 0: home, 1: monto, 2: categoria, 3: item
   amount: 0,
   categoryId: null,
   itemId: null,
-  note: ''
+  note: '',
+  carteraLink: null, // { section, key } destino del aporte en la cartera
 };
 
 export async function renderQuickAdd() {
@@ -104,7 +108,10 @@ export async function renderQuickAdd() {
         <div id="qa-item-list" style="display:flex;flex-direction:column;gap:var(--space-2);max-height:50vh;overflow-y:auto;margin-bottom:var(--space-4)">
           <!-- Lista generada dinámicamente -->
         </div>
-        
+
+        <!-- Selector de destino en cartera (solo categoría Inversión) -->
+        <div id="qa-cartera-link" style="display:none;margin-bottom:var(--space-4)"></div>
+
         <div style="margin-bottom:var(--space-4)">
           <input type="text" id="qa-note-input" class="form-input" placeholder="Nota opcional (ej: super Coto)..." style="width:100%">
         </div>
@@ -166,6 +173,7 @@ function bindEvents() {
     btn.addEventListener('click', async () => {
       flowState.categoryId = parseInt(btn.dataset.id, 10);
       await loadItems(flowState.categoryId);
+      await renderCarteraLinkSelector();
       showStep(3);
     });
   });
@@ -175,7 +183,7 @@ function bindEvents() {
 }
 
 function startFlow(type) {
-  flowState = { type, step: 1, amount: 0, categoryId: null, itemId: null, note: '' };
+  flowState = { type, step: 1, amount: 0, categoryId: null, itemId: null, note: '', carteraLink: null };
   $('#qa-amount-input').value = '';
   $('#qa-note-input').value = '';
   $('#btn-save-tx').disabled = true;
@@ -274,6 +282,60 @@ async function loadItems(categoryId) {
   });
 }
 
+/**
+ * Renderiza el selector "¿A qué parte de tu cartera va este aporte?".
+ * Solo aparece para la categoría Inversión. Ofrece primero las líneas de
+ * Inversiones y luego las de Liquidez en ARS (la transacción es en ARS, así
+ * que no se ofrecen líneas en USD para evitar mezclar monedas). Por defecto
+ * suma a la primera línea de inversión; se puede elegir "No sumar a cartera".
+ */
+async function renderCarteraLinkSelector() {
+  const wrap = $('#qa-cartera-link');
+  if (!wrap) return;
+
+  if (flowState.type !== 'egreso' || flowState.categoryId !== CATEGORIA_INVERSION_ID) {
+    wrap.style.display = 'none';
+    wrap.innerHTML = '';
+    flowState.carteraLink = null;
+    return;
+  }
+
+  const portfolio = await dbGet('portfolio', 'current');
+  const opts = [];
+  const collect = (section) => {
+    Object.entries(portfolio?.[section] || {}).forEach(([key, item]) => {
+      if ((item.moneda || 'ARS') !== 'ARS') return; // solo ARS
+      opts.push({ section, key, label: item.label || key });
+    });
+  };
+  collect('inversiones'); // inversiones primero (lo más usado)
+  collect('liquidez');
+
+  // Default: primera línea de inversión (suma automática). Si no hay ninguna
+  // línea ARS, queda en "No sumar".
+  flowState.carteraLink = opts.length ? { section: opts[0].section, key: opts[0].key } : null;
+
+  wrap.style.display = 'block';
+  wrap.innerHTML = `
+    <label style="display:block;font-size:var(--font-size-sm);font-weight:600;color:var(--color-text-secondary);margin-bottom:var(--space-2)">
+      💼 ¿A qué parte de tu cartera va este aporte?
+    </label>
+    <select id="qa-cartera-select" class="form-input" style="width:100%">
+      ${opts.map((o, i) => `
+        <option value="${o.section}:${o.key}" ${i === 0 ? 'selected' : ''}>${o.label}</option>
+      `).join('')}
+      <option value="">No sumar a cartera</option>
+    </select>
+  `;
+
+  $('#qa-cartera-select').addEventListener('change', (e) => {
+    const v = e.target.value;
+    if (!v) { flowState.carteraLink = null; return; }
+    const [section, key] = v.split(':');
+    flowState.carteraLink = { section, key };
+  });
+}
+
 async function handleSave() {
   if (!flowState.itemId || flowState.amount <= 0) return;
   
@@ -290,10 +352,15 @@ async function handleSave() {
       categoryId: flowState.categoryId,
       itemId: flowState.itemId,
       amount: flowState.amount,
-      note: flowState.note
+      note: flowState.note,
+      carteraLink: flowState.carteraLink,
     });
-    
-    showToast('✓ Transacción guardada con éxito', 'success');
+
+    if (flowState.carteraLink) {
+      showToast('✓ Aporte guardado y sumado a tu cartera', 'success');
+    } else {
+      showToast('✓ Transacción guardada con éxito', 'success');
+    }
     renderQuickAdd(); // Reload home view to show updated totals
   } catch (error) {
     console.error(error);
