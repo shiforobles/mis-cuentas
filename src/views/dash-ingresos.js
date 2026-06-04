@@ -5,11 +5,17 @@
 import { allMonths, configData, dolarCCL, chartInstances, getChartDefaults, renderDollarWidget } from './dashboard.js';
 import { calcTotalIngresos, calcTotalEgresos, calcIngresosUSD, calcTotalAnual } from '../services/calculations.js';
 import { formatARS, formatUSD, formatDolar } from '../utils/format.js';
-import { MESES_SHORT } from '../utils/constants.js';
+import { MESES_SHORT, mesesTranscurridos } from '../utils/constants.js';
 import { navigate } from '../router.js';
 
 export function renderTabIngresos(panel) {
-  const anual = calcTotalAnual(allMonths, 'proyectado', dolarCCL);
+  // Solo contar/mostrar meses hasta el actual (años pasados: 12 completos).
+  const año = configData?.año || 2026;
+  const nMeses = mesesTranscurridos(año);
+  const mesesVisibles = allMonths.slice(0, nMeses);
+  const labelsVisibles = MESES_SHORT.slice(0, nMeses);
+
+  const anual = calcTotalAnual(mesesVisibles, 'proyectado', dolarCCL);
 
   panel.innerHTML = `
     <div id="dollar-widget" class="section"></div>
@@ -23,7 +29,7 @@ export function renderTabIngresos(panel) {
           </tr></thead>
           <tbody>
             ${allMonths.map((m, i) => {
-              if (!m) return '';
+              if (!m || i >= nMeses) return '';
               const ing = calcTotalIngresos(m.ingresos, 'proyectado');
               const eg = calcTotalEgresos(m.egresos, 'proyectado');
               const dm = m.dolarCCL || dolarCCL;
@@ -83,7 +89,7 @@ export function renderTabIngresos(panel) {
     if (ctx1) {
       chartInstances.ingresos = new Chart(ctx1, {
         type: 'bar',
-        data: { labels: MESES_SHORT, datasets: [{ label: 'Ingresos $', data: allMonths.map(m => m ? calcTotalIngresos(m.ingresos, 'proyectado') : 0), backgroundColor: colors[0] + '99', borderColor: colors[0], borderWidth: 1, borderRadius: 6 }] },
+        data: { labels: labelsVisibles, datasets: [{ label: 'Ingresos $', data: mesesVisibles.map(m => m ? calcTotalIngresos(m.ingresos, 'proyectado') : 0), backgroundColor: colors[0] + '99', borderColor: colors[0], borderWidth: 1, borderRadius: 6 }] },
         options: { ...options, scales: scaleOpts }
       });
     }
@@ -93,7 +99,7 @@ export function renderTabIngresos(panel) {
     if (ctx2) {
       chartInstances.dolar = new Chart(ctx2, {
         type: 'line',
-        data: { labels: MESES_SHORT, datasets: [{ label: 'Dólar CCL', data: allMonths.map(m => m?.dolarCCL || dolarCCL), borderColor: colors[1], backgroundColor: 'rgba(34,211,238,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
+        data: { labels: labelsVisibles, datasets: [{ label: 'Dólar CCL', data: mesesVisibles.map(m => m?.dolarCCL || dolarCCL), borderColor: colors[1], backgroundColor: 'rgba(34,211,238,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
         options: { ...options, scales: { x: { ticks: { color: fontColor }, grid: { color: gridColor } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } }
       });
     }
@@ -101,13 +107,13 @@ export function renderTabIngresos(panel) {
     // Line: Ahorro
     const ctx3 = document.getElementById('chart-ahorro')?.getContext('2d');
     if (ctx3) {
-      const ahorroData = allMonths.map(m => {
+      const ahorroData = mesesVisibles.map(m => {
         if (!m) return 0;
         return calcTotalIngresos(m.ingresos, 'proyectado') - calcTotalEgresos(m.egresos, 'proyectado');
       });
       chartInstances.ahorro = new Chart(ctx3, {
         type: 'line',
-        data: { labels: MESES_SHORT, datasets: [{ label: 'Ahorro $', data: ahorroData, borderColor: colors[2], backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
+        data: { labels: labelsVisibles, datasets: [{ label: 'Ahorro $', data: ahorroData, borderColor: colors[2], backgroundColor: 'rgba(34,197,94,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
         options: { ...options, scales: { x: { ticks: { color: fontColor }, grid: { display: false } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } }
       });
     }

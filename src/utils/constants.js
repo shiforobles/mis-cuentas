@@ -217,6 +217,23 @@ export function parseMesKey(key) {
   return { mesId: key, año: AÑO_DEFAULT };
 }
 
+/**
+ * Cantidad de meses "visibles" (transcurridos) para un año dado, contra la
+ * fecha de hoy. Sirve para no contar/mostrar meses que todavía no llegaron.
+ *  - Año actual  → meses hasta el actual inclusive (1–12). Ej: junio → 6.
+ *  - Años pasados → 12 (el año entero ya transcurrió).
+ *  - Años futuros → 0.
+ * @param {number} año
+ * @returns {number} 0–12
+ */
+export function mesesTranscurridos(año) {
+  const hoy = new Date();
+  const añoActual = hoy.getFullYear();
+  if (año < añoActual) return 12;
+  if (año > añoActual) return 0;
+  return hoy.getMonth() + 1; // getMonth() es 0-based → +1 incluye el mes actual
+}
+
 /** Pestañas del dashboard */
 export const DASHBOARD_TABS = [
   { id: 'ingresos', label: 'Ingresos', icon: '💰' },
