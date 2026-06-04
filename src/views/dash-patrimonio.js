@@ -5,9 +5,10 @@
  */
 import { allMonths, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
 import { calcAhorroAcumulado, calcProyeccionAnual } from '../services/calculations.js';
-import { getPortfolioHistoryByYear, calcPortfolioEvolution } from '../services/portfolio-history.js';
+import { getPortfolioHistoryByYear, calcPortfolioEvolution, deletePortfolioSnapshot } from '../services/portfolio-history.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
-import { MESES_SHORT, MESES_LABEL } from '../utils/constants.js';
+import { MESES_SHORT } from '../utils/constants.js';
+import { showToast } from '../utils/helpers.js';
 
 export async function renderTabPatrimonio(panel) {
   const ahorro = calcAhorroAcumulado(allMonths, 'real', dolarCCL);
@@ -59,17 +60,20 @@ export async function renderTabPatrimonio(panel) {
               <th class="text-right">Total USD</th>
               <th class="text-right">Δ ARS</th>
               <th class="text-right">Δ %</th>
+              <th></th>
             </tr></thead>
             <tbody>
               ${evolution.map(e => {
                 const deltaColor = e.deltaARS >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)';
                 const arrow = e.deltaARS > 0 ? '▲' : e.deltaARS < 0 ? '▼' : '—';
+                const mesCap = e.mesId.charAt(0).toUpperCase() + e.mesId.slice(1);
                 return `<tr>
-                  <td style="font-weight:600">${MESES_LABEL[MESES_SHORT.indexOf(MESES_SHORT[0])] ? e.mesId.charAt(0).toUpperCase() + e.mesId.slice(1) : e.mesId}</td>
+                  <td style="font-weight:600">${mesCap}</td>
                   <td class="text-right" style="font-weight:600">${formatARS(e.granTotalARS)}</td>
                   <td class="text-right" style="color:var(--color-info-text)">${formatUSD(e.granTotalUSD)}</td>
                   <td class="text-right" style="color:${deltaColor}">${arrow} ${formatARS(Math.abs(e.deltaARS))}</td>
                   <td class="text-right" style="color:${deltaColor}">${e.deltaPercent !== 0 ? formatPercent(e.deltaPercent) : '—'}</td>
+                  <td class="text-right"><button class="row-delete btn-del-snap" data-id="${e.id}" data-mes="${mesCap}" title="Borrar snapshot">✕</button></td>
                 </tr>`;
               }).join('')}
             </tbody>
@@ -100,6 +104,22 @@ export async function renderTabPatrimonio(panel) {
       </div>
     </div>
   `;
+
+  // Borrar un snapshot puntual (con confirmación) y re-renderizar la pestaña.
+  panel.querySelectorAll('.btn-del-snap').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const { id, mes } = btn.dataset;
+      if (!confirm(`¿Borrar el snapshot de ${mes}? Esta acción no se puede deshacer.`)) return;
+      try {
+        await deletePortfolioSnapshot(id);
+        showToast(`Snapshot de ${mes} borrado`, 'success');
+        Object.values(chartInstances).forEach(c => c?.destroy?.());
+        renderTabPatrimonio(panel);
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+    });
+  });
 
   // Charts
   import('chart.js').then(({ Chart, registerables }) => {
@@ -144,14 +164,16 @@ export async function renderTabPatrimonio(panel) {
           data: {
             labels,
             datasets: [
-              { label: 'Total ARS', data: evolution.map(e => e.granTotalARS), borderColor: colors[0], backgroundColor: colors[0] + '15', fill: true, tension: 0.3, pointRadius: 5, borderWidth: 2.5 },
-              { label: 'Liquidez ARS', data: evolution.map(e => e.liquidezARS), borderColor: colors[1], tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4, 4] },
-              { label: 'Inversiones ARS', data: evolution.map(e => e.inversionesARS), borderColor: colors[5], tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4, 4] },
+              { label: 'Total ARS', data: evolution.map(e => e.granTotalARS), borderColor: colors[0], backgroundColor: colors[0] + '15', fill: true, tension: 0.3, pointRadius: 5, borderWidth: 2.5, yAxisID: 'y' },
+              { label: 'Total USD', data: evolution.map(e => e.granTotalUSD), borderColor: colors[1], borderDash: [5, 5], tension: 0.3, pointRadius: 3, borderWidth: 1.5, yAxisID: 'y1' },
+              { label: 'Liquidez ARS', data: evolution.map(e => e.liquidezARS), borderColor: colors[2], tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4, 4], yAxisID: 'y' },
+              { label: 'Inversiones ARS', data: evolution.map(e => e.inversionesARS), borderColor: colors[5], tension: 0.3, pointRadius: 3, borderWidth: 1.5, borderDash: [4, 4], yAxisID: 'y' },
             ]
           },
           options: { ...options, scales: {
             x: { ticks: { color: fontColor }, grid: { display: false } },
-            y: { ticks: { color: fontColor }, grid: { color: gridColor } }
+            y: { type: 'linear', position: 'left', ticks: { color: fontColor }, grid: { color: gridColor } },
+            y1: { type: 'linear', position: 'right', ticks: { color: colors[1] }, grid: { display: false } }
           } }
         });
       }

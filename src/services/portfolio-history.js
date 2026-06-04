@@ -3,7 +3,7 @@
  * Guarda snapshots mensuales para tracking de evolución patrimonial.
  */
 
-import { dbGet, dbPut, dbGetAll } from '../db/database.js';
+import { dbGet, dbPut, dbGetAll, dbDelete } from '../db/database.js';
 import { calcCartera } from './calculations.js';
 import { getDolarCCL } from './dollar.js';
 import { MESES } from '../utils/constants.js';
@@ -50,6 +50,23 @@ export async function takePortfolioSnapshot(mesId) {
 
   await dbPut('portfolioHistory', snapshot);
   return snapshot;
+}
+
+/**
+ * Toma un snapshot del mes calendario actual (atajo de takePortfolioSnapshot).
+ * @returns {Promise<Object|null>} el snapshot guardado, o null si no hay cartera.
+ */
+export async function snapshotCurrentMonth() {
+  const mesActual = MESES[new Date().getMonth()];
+  return takePortfolioSnapshot(mesActual);
+}
+
+/**
+ * Elimina un snapshot puntual del historial.
+ * @param {string} id - id del snapshot (ej: 'junio-2026')
+ */
+export async function deletePortfolioSnapshot(id) {
+  await dbDelete('portfolioHistory', id);
 }
 
 /**

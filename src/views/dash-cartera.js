@@ -5,6 +5,7 @@
 import { portfolioData, dolarCCL, chartInstances, getChartDefaults, allMonths } from './dashboard.js';
 import { calcCartera, calcRebalanceo, calcFondoEmergencia } from '../services/calculations.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
+import { showToast } from '../utils/helpers.js';
 
 export function renderTabCartera(panel) {
   if (!portfolioData) {
@@ -24,6 +25,7 @@ export function renderTabCartera(panel) {
         <span class="portfolio-total__ars">${formatARS(c.totals.granTotalARS)}</span>
         <span class="portfolio-total__usd">${formatUSD(c.totals.granTotalUSD)}</span>
       </div>
+      <button class="btn btn--secondary btn--sm" id="btn-dash-snapshot" style="width:100%;margin-top:var(--space-3)">📸 Guardar snapshot de cartera</button>
     </div>
 
     ${buildEmergenciaCard(fe)}
@@ -64,6 +66,30 @@ export function renderTabCartera(panel) {
       <div class="section"><div class="card"><h3 class="card__title"><span class="card__title-icon">📊</span> Inversiones</h3><div class="chart-container"><canvas id="chart-inv-dona"></canvas></div></div></div>
     </div>
   `;
+
+  // Botón: guardar snapshot de cartera del mes actual
+  const snapBtn = document.getElementById('btn-dash-snapshot');
+  if (snapBtn) {
+    snapBtn.addEventListener('click', async () => {
+      const original = snapBtn.textContent;
+      snapBtn.disabled = true;
+      snapBtn.textContent = 'Guardando…';
+      try {
+        const { snapshotCurrentMonth } = await import('../services/portfolio-history.js');
+        const snap = await snapshotCurrentMonth();
+        if (snap) {
+          const mesCap = snap.mesId.charAt(0).toUpperCase() + snap.mesId.slice(1);
+          showToast(`📸 Snapshot de ${mesCap}: ${formatARS(snap.granTotalARS)} / ${formatUSD(snap.granTotalUSD)}`, 'success');
+        } else {
+          showToast('Cargá datos de cartera primero', 'warning');
+        }
+      } catch (err) {
+        showToast('Error: ' + err.message, 'error');
+      }
+      snapBtn.disabled = false;
+      snapBtn.textContent = original;
+    });
+  }
 
   // Charts
   import('chart.js').then(({ Chart, registerables }) => {

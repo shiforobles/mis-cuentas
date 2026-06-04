@@ -5,7 +5,7 @@
 
 import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUserData } from '../db/database.js';
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
-import { formatARS, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
+import { formatARS, formatUSD, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
 import { $, showToast, debounce, generateId, escapeHtml } from '../utils/helpers.js';
 
@@ -99,8 +99,14 @@ export async function renderSettings() {
           Elegí qué concepto de Liquidez es tu fondo. El dashboard te muestra cuántos meses de gastos cubre (objetivo: 3 meses).
         </div>
         <div id="portfolio-emergencia"></div>
+
+        <h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-5) 0 var(--space-2);color:var(--color-text-secondary)">📸 Snapshot de cartera</h3>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Guardá una foto del estado actual de tu cartera para ver la evolución de tu patrimonio en el dashboard → Patrimonio. Hay una foto por mes (si volvés a guardar, reemplaza la del mes).
+        </div>
+        <button class="btn btn--secondary" id="btn-snapshot-cartera" style="width:100%">📸 Guardar snapshot de este mes</button>
       </div>
-      
+
       <!-- Importar / Exportar -->
       <div class="settings-group">
         <h2 class="settings-group__title">📦 Datos</h2>
@@ -739,21 +745,23 @@ function setupEventListeners() {
     }
   });
   
-  // Portfolio Snapshot
-  $('#action-snapshot')?.addEventListener('click', async () => {
-    const mesActual = MESES[new Date().getMonth()];
+  // Portfolio Snapshot (mismo handler para el botón de "Datos" y el de "Cartera")
+  const doSnapshot = async () => {
     try {
-      const { takePortfolioSnapshot } = await import('../services/portfolio-history.js');
-      const snap = await takePortfolioSnapshot(mesActual);
+      const { snapshotCurrentMonth } = await import('../services/portfolio-history.js');
+      const snap = await snapshotCurrentMonth();
       if (snap) {
-        showToast(`Snapshot de ${mesActual} guardado`, 'success');
+        const mesCap = snap.mesId.charAt(0).toUpperCase() + snap.mesId.slice(1);
+        showToast(`📸 Snapshot de ${mesCap}: ${formatARS(snap.granTotalARS)} / ${formatUSD(snap.granTotalUSD)}`, 'success');
       } else {
         showToast('Cargá datos de cartera primero', 'warning');
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
     }
-  });
+  };
+  $('#action-snapshot')?.addEventListener('click', doSnapshot);
+  $('#btn-snapshot-cartera')?.addEventListener('click', doSnapshot);
 
   // Resetear datos (destructivo, doble confirmación)
   $('#action-reset-data')?.addEventListener('click', async () => {
