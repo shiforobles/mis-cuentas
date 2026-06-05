@@ -284,10 +284,11 @@ async function loadItems(categoryId) {
 
 /**
  * Renderiza el selector "¿A qué parte de tu cartera va este aporte?".
- * Solo aparece para la categoría Inversión. Ofrece primero las líneas de
- * Inversiones y luego las de Liquidez en ARS (la transacción es en ARS, así
- * que no se ofrecen líneas en USD para evitar mezclar monedas). Por defecto
- * suma a la primera línea de inversión; se puede elegir "No sumar a cartera".
+ * Solo aparece para la categoría Inversión. Ofrece TODAS las líneas de la
+ * cartera (Inversiones primero, luego Liquidez), sin importar la moneda: si la
+ * línea está en USD, el aporte ARS se convierte con el CCL del mes al guardar
+ * (ver buildCarteraLink en transactions.js). Por defecto suma a la primera
+ * línea de inversión; se puede elegir "No sumar a cartera".
  */
 async function renderCarteraLinkSelector() {
   const wrap = $('#qa-cartera-link');
@@ -304,15 +305,15 @@ async function renderCarteraLinkSelector() {
   const opts = [];
   const collect = (section) => {
     Object.entries(portfolio?.[section] || {}).forEach(([key, item]) => {
-      if ((item.moneda || 'ARS') !== 'ARS') return; // solo ARS
-      opts.push({ section, key, label: item.label || key });
+      const moneda = item.moneda === 'USD' ? 'US$' : 'ARS';
+      opts.push({ section, key, label: `${item.label || key} · ${moneda}` });
     });
   };
   collect('inversiones'); // inversiones primero (lo más usado)
   collect('liquidez');
 
-  // Default: primera línea de inversión (suma automática). Si no hay ninguna
-  // línea ARS, queda en "No sumar".
+  // Default: primera línea de inversión (suma automática). Si la cartera está
+  // vacía, queda en "No sumar".
   flowState.carteraLink = opts.length ? { section: opts[0].section, key: opts[0].key } : null;
 
   wrap.style.display = 'block';

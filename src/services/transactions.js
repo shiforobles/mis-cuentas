@@ -1,11 +1,13 @@
 import { dbGet, dbPut, dbDelete, dbGetTransactionsByMonth, dbGetTransactionsByItem } from '../db/database.js';
+import { getDolarCCL } from './dollar.js';
 import { generateId } from '../utils/helpers.js';
 
 /**
- * Aplica un delta (en ARS) sobre el monto de una línea de la cartera.
- * No crea campos paralelos: mueve el único número `monto` que el usuario
- * también edita a mano en Config. Clampea a 0 para evitar negativos si el
- * usuario bajó el monto manualmente por debajo del aporte.
+ * Aplica un delta sobre el monto de una línea de la cartera, EN LA MONEDA DE
+ * ESA LÍNEA (el delta ya viene convertido: ver buildCarteraLink). No crea
+ * campos paralelos: mueve el único número `monto` que el usuario también edita
+ * a mano en Config. Clampea a 0 para evitar negativos si el usuario bajó el
+ * monto manualmente por debajo del aporte.
  *
  * @param {{section: string, key: string}} link - Destino en la cartera
  * @param {number} delta - Monto a sumar (positivo) o revertir (negativo)
@@ -21,6 +23,34 @@ async function applyCarteraDelta(link, delta) {
 }
 
 /**
+ * Construye el vínculo de cartera normalizado a partir del destino elegido y el
+ * monto (en ARS) de la transacción. Si la línea destino está en USD, convierte
+ * el aporte ARS→USD con el CCL del mes. El `amount` resultante queda en la
+ * moneda de la línea (es el delta exacto que se sumará/revertirá).
+ *
+ * @param {{section: string, key: string}|null} link - destino elegido
+ * @param {number} amountARS - monto de la transacción, en ARS
+ * @param {string} mesId - mes de la transacción (para tomar el CCL correcto)
+ * @returns {Promise<{section,key,amount,moneda,ccl}|null>}
+ */
+async function buildCarteraLink(link, amountARS, mesId) {
+  if (!link || !link.section || !link.key) return null;
+
+  const portfolio = await dbGet('portfolio', 'current');
+  const line = portfolio?.[link.section]?.[link.key];
+  const moneda = line?.moneda || 'ARS';
+
+  let amount = amountARS; // por defecto la línea es ARS → mismo monto
+  let ccl = null;
+  if (moneda === 'USD') {
+    ccl = await getDolarCCL(mesId);
+    amount = ccl > 0 ? amountARS / ccl : 0; // ARS → USD
+  }
+
+  return { section: link.section, key: link.key, amount, moneda, ccl };
+}
+
+/**
  * Guarda una transacción y actualiza el total "Real" del ítem del mes.
  * Si la transacción trae `carteraLink`, sincroniza la línea de cartera por deltas:
  *  - Nueva: suma el monto a la línea destino.
@@ -33,16 +63,12 @@ export async function saveTransaction(txData) {
   // Leer el estado previo para calcular el delta de cartera en ediciones.
   const prevTx = txData.id ? await dbGet('transactions', txData.id) : null;
 
-  // Normalizar el vínculo de cartera nuevo (su monto siempre = monto de la tx).
+  // Normalizar el vínculo de cartera nuevo. La transacción está en ARS; si la
+  // línea destino está en USD, convertimos el aporte a USD con el CCL del mes
+  // (así no sumamos pesos a una línea en dólares). El monto guardado queda en
+  // la moneda de la línea, que es lo que se suma/revierte como delta.
   const amount = Number(txData.amount) || 0;
-  let carteraLink = null;
-  if (txData.carteraLink && txData.carteraLink.section && txData.carteraLink.key) {
-    carteraLink = {
-      section: txData.carteraLink.section,
-      key: txData.carteraLink.key,
-      amount,
-    };
-  }
+  const carteraLink = await buildCarteraLink(txData.carteraLink, amount, txData.mesId);
 
   const tx = {
     id: txData.id || generateId(),
