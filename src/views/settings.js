@@ -241,10 +241,32 @@ async function renderAccountSection() {
         Conectado como <strong>${escapeHtml(user.email || 'usuario')}</strong>.
         <span class="badge badge--success" style="margin-left:6px">Cuenta vinculada</span>
       </div>
-      <div class="form-field__hint" style="margin-bottom:var(--space-3);color:var(--color-text-muted)">
-        La sincronización de datos se activa en una próxima etapa. Por ahora la cuenta queda conectada.
-      </div>
+      <button class="btn btn--primary" id="btn-sync-push" style="width:100%;margin-bottom:var(--space-2)">⬆️ Subir mis datos a la nube</button>
+      <div id="sync-push-msg" style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-bottom:var(--space-3)"></div>
       <button class="btn btn--secondary" id="btn-auth-logout" style="width:100%">Cerrar sesión</button>`;
+
+    $('#btn-sync-push')?.addEventListener('click', async () => {
+      const btn = $('#btn-sync-push');
+      const msg = $('#sync-push-msg');
+      btn.disabled = true; btn.textContent = 'Subiendo…';
+      if (msg) msg.textContent = '';
+      try {
+        const { fullPush } = await import('../services/sync.js');
+        const r = await fullPush();
+        if (r.ok) {
+          if (msg) msg.textContent = `Listo: ${r.pushed} subidos, ${r.deleted} borrados.`;
+          showToast(`☁️ Datos subidos (${r.pushed})`, 'success');
+        } else if (r.reason === 'no-auth') {
+          showToast('Iniciá sesión primero', 'warning');
+        } else {
+          if (msg) { msg.textContent = `Algunos fallaron (${r.failed}). Reintentá.`; msg.style.color = 'var(--color-danger-text)'; }
+          showToast('Sync con errores, quedó pendiente', 'error');
+        }
+      } catch (err) {
+        showToast('Error al subir: ' + err.message, 'error');
+      }
+      btn.disabled = false; btn.textContent = '⬆️ Subir mis datos a la nube';
+    });
 
     $('#btn-auth-logout')?.addEventListener('click', async () => {
       const btn = $('#btn-auth-logout');

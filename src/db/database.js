@@ -191,6 +191,26 @@ export async function removeFromOutbox(key) {
   return db.delete('syncOutbox', key);
 }
 
+/**
+ * Encola TODOS los registros locales de los stores sincronizables como pendientes
+ * de subir (push inicial / "subir todo"). NO pisa el `updatedAt` de los que ya lo
+ * tienen — solo estampa los que falten — para no romper el last-write-wins.
+ */
+export async function enqueueAllForInitialPush() {
+  const db = await getDB();
+  for (const store of SYNCED_STORES) {
+    const all = await db.getAll(store);
+    for (const rec of all) {
+      if (!rec || rec.id == null) continue;
+      if (!rec.updatedAt) {
+        rec.updatedAt = new Date().toISOString();
+        await db.put(store, rec); // put directo: no re-encola por su cuenta
+      }
+      await enqueueOutbox(db, store, rec.id, 'put', rec.updatedAt);
+    }
+  }
+}
+
 // ─── META DE SYNC (lastPulledAt, etc.) ──────────────────────
 
 /** Lee el registro de metadatos de sync. @returns {Promise<object>} */
