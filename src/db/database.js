@@ -8,7 +8,13 @@ import { CARTERA_DEFAULT } from '../utils/constants.js';
 import { deepClone } from '../utils/helpers.js';
 
 const DB_NAME = 'mis-cuentas-db';
-const DB_VERSION = 3;
+const DB_VERSION = 4;
+
+/**
+ * Stores que contienen datos del usuario y se sincronizan con Supabase.
+ * (No incluye los stores internos de sync: syncOutbox / syncMeta.)
+ */
+export const SYNCED_STORES = ['config', 'months', 'portfolio', 'portfolioHistory', 'transactions', 'recurring'];
 
 let dbInstance = null;
 
@@ -54,6 +60,19 @@ export async function getDB() {
           db.createObjectStore('recurring', { keyPath: 'id' });
         }
       }
+
+      // v4: Stores internos de sincronización (Supabase).
+      if (oldVersion < 4) {
+        // Cola de cambios locales pendientes de subir. Key = "store:id" para
+        // que ediciones repetidas del mismo registro colapsen en una entrada.
+        if (!db.objectStoreNames.contains('syncOutbox')) {
+          db.createObjectStore('syncOutbox', { keyPath: 'key' });
+        }
+        // Metadatos de sync (1 registro 'state'): lastPulledAt por store, etc.
+        if (!db.objectStoreNames.contains('syncMeta')) {
+          db.createObjectStore('syncMeta', { keyPath: 'id' });
+        }
+      }
     },
   });
 
@@ -82,25 +101,108 @@ export async function dbGetAll(storeName) {
 }
 
 /**
- * Escribe (put) un registro en un store.
+ * Escribe (put) un registro en un store. Si el store es sincronizable, estampa
+ * `updatedAt` (momento de este cambio local, para el last-write-wins) y encola
+ * el registro en el outbox como pendiente de subir. Toda la app escribe por
+ * acá, así que el sync queda cubierto sin tocar las vistas.
  * @param {string} storeName
  * @param {any} value
  * @returns {Promise<string>}
  */
 export async function dbPut(storeName, value) {
   const db = await getDB();
+  if (SYNCED_STORES.includes(storeName) && value && typeof value === 'object') {
+    value.updatedAt = new Date().toISOString();
+    const res = await db.put(storeName, value);
+    await enqueueOutbox(db, storeName, value.id ?? res, 'put', value.updatedAt);
+    return res;
+  }
   return db.put(storeName, value);
 }
 
 /**
- * Elimina un registro de un store.
+ * Escribe SIN estampar `updatedAt` ni encolar en el outbox. La usa el motor de
+ * PULL para aplicar lo que baja de la nube sin re-disparar un push (evita loops)
+ * y preservando el `updatedAt` remoto.
+ * @param {string} storeName
+ * @param {any} value
+ */
+export async function dbPutRaw(storeName, value) {
+  const db = await getDB();
+  return db.put(storeName, value);
+}
+
+/**
+ * Elimina un registro de un store. Si es sincronizable, deja un "tombstone" en
+ * el outbox para propagar el borrado a la nube y a los otros dispositivos.
  * @param {string} storeName
  * @param {string} key
  * @returns {Promise<void>}
  */
 export async function dbDelete(storeName, key) {
   const db = await getDB();
+  const res = await db.delete(storeName, key);
+  if (SYNCED_STORES.includes(storeName)) {
+    await enqueueOutbox(db, storeName, key, 'delete', new Date().toISOString());
+  }
+  return res;
+}
+
+/**
+ * Borra SIN dejar tombstone (lo usa el motor de PULL al aplicar borrados
+ * remotos, sin re-encolarlos).
+ * @param {string} storeName
+ * @param {string} key
+ */
+export async function dbDeleteRaw(storeName, key) {
+  const db = await getDB();
   return db.delete(storeName, key);
+}
+
+// ─── OUTBOX (cola de cambios pendientes de sync) ────────────
+
+/**
+ * Encola (o actualiza) una entrada del outbox. Key = "store:id" para colapsar
+ * múltiples ediciones del mismo registro en una sola entrada (la última gana).
+ * Usa el handle de db directo, sin pasar por dbPut (no se sincroniza a sí mismo).
+ */
+async function enqueueOutbox(db, store, id, op, updatedAt) {
+  if (id == null) return;
+  try {
+    await db.put('syncOutbox', { key: `${store}:${id}`, store, recordId: String(id), op, updatedAt });
+  } catch { /* outbox no disponible (DB vieja): ignorar, no romper el guardado */ }
+}
+
+/**
+ * Devuelve todas las entradas pendientes del outbox.
+ * @returns {Promise<Array<{key,store,recordId,op,updatedAt}>>}
+ */
+export async function getOutbox() {
+  const db = await getDB();
+  return db.getAll('syncOutbox');
+}
+
+/**
+ * Quita una entrada del outbox (tras subirla con éxito).
+ * @param {string} key - "store:id"
+ */
+export async function removeFromOutbox(key) {
+  const db = await getDB();
+  return db.delete('syncOutbox', key);
+}
+
+// ─── META DE SYNC (lastPulledAt, etc.) ──────────────────────
+
+/** Lee el registro de metadatos de sync. @returns {Promise<object>} */
+export async function getSyncMeta() {
+  const db = await getDB();
+  return (await db.get('syncMeta', 'state')) || { id: 'state', lastPulledAt: {} };
+}
+
+/** Guarda el registro de metadatos de sync. @param {object} meta */
+export async function setSyncMeta(meta) {
+  const db = await getDB();
+  return db.put('syncMeta', { ...meta, id: 'state' });
 }
 
 /**
