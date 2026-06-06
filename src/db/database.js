@@ -18,61 +18,81 @@ export const SYNCED_STORES = ['config', 'months', 'portfolio', 'portfolioHistory
 
 let dbInstance = null;
 
+/** Todos los stores que la versión actual del esquema debe tener. */
+const ALL_STORES = [...SYNCED_STORES, 'syncOutbox', 'syncMeta'];
+
+/** ¿La conexión tiene todos los stores esperados? (detecta conexiones viejas). */
+function hasAllStores(db) {
+  return ALL_STORES.every(s => db.objectStoreNames.contains(s));
+}
+
+/** Crea los object stores que falten. Idempotente; corre en cada upgrade. */
+function runUpgrade(db, oldVersion) {
+  if (!db.objectStoreNames.contains('config')) {
+    db.createObjectStore('config', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('months')) {
+    db.createObjectStore('months', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('portfolio')) {
+    db.createObjectStore('portfolio', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('portfolioHistory')) {
+    db.createObjectStore('portfolioHistory', { keyPath: 'id' });
+  }
+  if (!db.objectStoreNames.contains('transactions')) {
+    const txStore = db.createObjectStore('transactions', { keyPath: 'id' });
+    txStore.createIndex('mesId', 'mesId');
+    txStore.createIndex('itemId', 'itemId');
+  }
+  // recurring existe desde v3
+  if (!db.objectStoreNames.contains('recurring')) {
+    db.createObjectStore('recurring', { keyPath: 'id' });
+  }
+  // v4: stores internos de sincronización (Supabase).
+  // Sin guardas por oldVersion: si por lo que sea faltan (DB que no terminó de
+  // migrar), los creamos igual. createObjectStore solo corre dentro de un
+  // upgrade, así que es seguro.
+  if (!db.objectStoreNames.contains('syncOutbox')) {
+    db.createObjectStore('syncOutbox', { keyPath: 'key' });
+  }
+  if (!db.objectStoreNames.contains('syncMeta')) {
+    db.createObjectStore('syncMeta', { keyPath: 'id' });
+  }
+}
+
 /**
- * Abre (o crea) la base de datos IndexedDB.
+ * Abre (o crea) la base de datos IndexedDB. Robusto ante:
+ *  - conexión cacheada vieja (sin los stores nuevos) → reabre,
+ *  - otra pestaña con la DB abierta en versión vieja → la avisamos / cerramos,
+ *  - cierres inesperados → resetea el singleton.
  * @returns {Promise<import('idb').IDBPDatabase>}
  */
 export async function getDB() {
-  if (dbInstance) return dbInstance;
+  // Si tenemos una conexión cacheada pero le faltan stores (quedó de una versión
+  // anterior, p.ej. tras una actualización por HMR/SW), la descartamos y reabrimos.
+  if (dbInstance) {
+    if (hasAllStores(dbInstance)) return dbInstance;
+    try { dbInstance.close(); } catch { /* noop */ }
+    dbInstance = null;
+  }
 
   dbInstance = await openDB(DB_NAME, DB_VERSION, {
     upgrade(db, oldVersion) {
-      // Store: config — configuración global (1 registro)
-      if (!db.objectStoreNames.contains('config')) {
-        db.createObjectStore('config', { keyPath: 'id' });
-      }
-
-      // Store: months — datos mensuales (12 registros, key=nombre del mes)
-      if (!db.objectStoreNames.contains('months')) {
-        db.createObjectStore('months', { keyPath: 'id' });
-      }
-
-      // Store: portfolio — cartera actual (1 registro)
-      if (!db.objectStoreNames.contains('portfolio')) {
-        db.createObjectStore('portfolio', { keyPath: 'id' });
-      }
-
-      // Store: portfolioHistory — snapshots mensuales de cartera
-      if (!db.objectStoreNames.contains('portfolioHistory')) {
-        db.createObjectStore('portfolioHistory', { keyPath: 'id' });
-      }
-
-      // Store: transactions — modelo de transacciones de la fase 3.4
-      if (!db.objectStoreNames.contains('transactions')) {
-        const txStore = db.createObjectStore('transactions', { keyPath: 'id' });
-        txStore.createIndex('mesId', 'mesId');
-        txStore.createIndex('itemId', 'itemId');
-      }
-
-      // v3: Store: recurring — ítems recurrentes
-      if (oldVersion < 3) {
-        if (!db.objectStoreNames.contains('recurring')) {
-          db.createObjectStore('recurring', { keyPath: 'id' });
-        }
-      }
-
-      // v4: Stores internos de sincronización (Supabase).
-      if (oldVersion < 4) {
-        // Cola de cambios locales pendientes de subir. Key = "store:id" para
-        // que ediciones repetidas del mismo registro colapsen en una entrada.
-        if (!db.objectStoreNames.contains('syncOutbox')) {
-          db.createObjectStore('syncOutbox', { keyPath: 'key' });
-        }
-        // Metadatos de sync (1 registro 'state'): lastPulledAt por store, etc.
-        if (!db.objectStoreNames.contains('syncMeta')) {
-          db.createObjectStore('syncMeta', { keyPath: 'id' });
-        }
-      }
+      runUpgrade(db, oldVersion);
+    },
+    blocked() {
+      // Otra pestaña tiene la DB abierta en una versión vieja y bloquea el upgrade.
+      console.warn('[db] Actualización de la base bloqueada por otra pestaña abierta. Cerrá las demás pestañas de Mis Cuentas y recargá.');
+    },
+    blocking() {
+      // Esta conexión está bloqueando un upgrade de OTRA pestaña: la cerramos
+      // para no trabar la actualización. Se reabrirá en el próximo getDB().
+      try { dbInstance?.close(); } catch { /* noop */ }
+      dbInstance = null;
+    },
+    terminated() {
+      dbInstance = null;
     },
   });
 
