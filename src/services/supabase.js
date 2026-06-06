@@ -9,7 +9,16 @@
 import { createClient } from '@supabase/supabase-js';
 
 const URL = import.meta.env.VITE_SUPABASE_URL;
-const ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+// Clave pública del cliente. Soporta tanto el formato NUEVO de Supabase
+// (publishable key: "sb_publishable_...") como la anon key legacy ("eyJ...").
+// Ambas son seguras para el browser SIEMPRE con RLS activado. supabase-js la usa
+// como header `apikey` y no la decodifica como JWT, así que el formato nuevo
+// funciona sin configuración extra. Se acepta bajo cualquiera de estos nombres
+// de env var (preferimos el explícito si está presente).
+const PUBLIC_KEY =
+  import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY ||
+  import.meta.env.VITE_SUPABASE_ANON_KEY;
 
 let client = null;
 
@@ -18,7 +27,7 @@ let client = null;
  * @returns {boolean}
  */
 export function isSupabaseConfigured() {
-  return Boolean(URL && ANON_KEY);
+  return Boolean(URL && PUBLIC_KEY);
 }
 
 /**
@@ -30,7 +39,7 @@ export function isSupabaseConfigured() {
 export function getSupabase() {
   if (!isSupabaseConfigured()) return null;
   if (!client) {
-    client = createClient(URL, ANON_KEY, {
+    client = createClient(URL, PUBLIC_KEY, {
       auth: {
         persistSession: true,
         autoRefreshToken: true,

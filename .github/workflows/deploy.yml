@@ -32,7 +32,10 @@ jobs:
           # Credenciales de Supabase (cargar como Secrets del repo en
           # Settings → Secrets and variables → Actions). Si no están definidos,
           # el build sale en modo "sin sync" y la app funciona igual offline.
+          # La clave pública soporta el formato nuevo (sb_publishable_...) o la
+          # anon legacy; aceptamos cualquiera de los dos nombres de Secret.
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
       - uses: actions/configure-pages@v5
       - uses: actions/upload-pages-artifact@v3
