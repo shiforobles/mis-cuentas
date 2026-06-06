@@ -8,7 +8,9 @@ import { CARTERA_DEFAULT } from '../utils/constants.js';
 import { deepClone } from '../utils/helpers.js';
 
 const DB_NAME = 'mis-cuentas-db';
-const DB_VERSION = 4;
+// v5: fuerza recrear syncOutbox/syncMeta en bases que quedaron en v4 incompleta
+// (la versión había subido pero los stores no se habían creado).
+const DB_VERSION = 5;
 
 /**
  * Stores que contienen datos del usuario y se sincronizan con Supabase.
@@ -61,23 +63,9 @@ function runUpgrade(db, oldVersion) {
   }
 }
 
-/**
- * Abre (o crea) la base de datos IndexedDB. Robusto ante:
- *  - conexión cacheada vieja (sin los stores nuevos) → reabre,
- *  - otra pestaña con la DB abierta en versión vieja → la avisamos / cerramos,
- *  - cierres inesperados → resetea el singleton.
- * @returns {Promise<import('idb').IDBPDatabase>}
- */
-export async function getDB() {
-  // Si tenemos una conexión cacheada pero le faltan stores (quedó de una versión
-  // anterior, p.ej. tras una actualización por HMR/SW), la descartamos y reabrimos.
-  if (dbInstance) {
-    if (hasAllStores(dbInstance)) return dbInstance;
-    try { dbInstance.close(); } catch { /* noop */ }
-    dbInstance = null;
-  }
-
-  dbInstance = await openDB(DB_NAME, DB_VERSION, {
+/** Callbacks de apertura (compartidos por todas las aperturas de la DB). */
+function dbOpenHandlers() {
+  return {
     upgrade(db, oldVersion) {
       runUpgrade(db, oldVersion);
     },
@@ -86,15 +74,55 @@ export async function getDB() {
       console.warn('[db] Actualización de la base bloqueada por otra pestaña abierta. Cerrá las demás pestañas de Mis Cuentas y recargá.');
     },
     blocking() {
-      // Esta conexión está bloqueando un upgrade de OTRA pestaña: la cerramos
-      // para no trabar la actualización. Se reabrirá en el próximo getDB().
+      // Esta conexión bloquea un upgrade de OTRA pestaña: la cerramos para no
+      // trabar la actualización. Se reabrirá en el próximo getDB().
       try { dbInstance?.close(); } catch { /* noop */ }
       dbInstance = null;
     },
     terminated() {
       dbInstance = null;
     },
-  });
+  };
+}
+
+/**
+ * Abre (o crea) la base de datos IndexedDB. Robusto ante:
+ *  - conexión cacheada vieja (sin los stores nuevos) → reabre,
+ *  - "versión incompleta": la DB figura en una versión pero le faltan stores
+ *    (un upgrade previo subió el número pero no creó todo). Como IndexedDB solo
+ *    corre el upgrade cuando la versión AUMENTA, abrir a la misma versión no lo
+ *    arregla: detectamos el faltante y reabrimos en versión+1 para forzarlo.
+ *  - otra pestaña bloqueando el upgrade → avisamos / cerramos.
+ * @returns {Promise<import('idb').IDBPDatabase>}
+ */
+export async function getDB() {
+  if (dbInstance) {
+    if (hasAllStores(dbInstance)) return dbInstance;
+    try { dbInstance.close(); } catch { /* noop */ }
+    dbInstance = null;
+  }
+
+  // Conocer la versión real en disco SIN disparar upgrade, para no abrir nunca
+  // por debajo de ella (evitar VersionError) y elegir bien la versión objetivo.
+  let onDisk = 0;
+  try {
+    const probe = await openDB(DB_NAME);
+    onDisk = probe.version;
+    probe.close();
+  } catch { onDisk = 0; }
+
+  // Abrir al menos en DB_VERSION, nunca por debajo de la de disco.
+  const target = Math.max(DB_VERSION, onDisk);
+  dbInstance = await openDB(DB_NAME, target, dbOpenHandlers());
+
+  // Si quedó incompleta (ya estaba en 'target', así que no se disparó upgrade),
+  // forzamos uno reabriendo en la versión siguiente.
+  if (!hasAllStores(dbInstance)) {
+    const next = dbInstance.version + 1;
+    console.warn(`[db] Esquema incompleto en v${dbInstance.version}; reabriendo en v${next} para crear los stores faltantes.`);
+    try { dbInstance.close(); } catch { /* noop */ }
+    dbInstance = await openDB(DB_NAME, next, dbOpenHandlers());
+  }
 
   return dbInstance;
 }
