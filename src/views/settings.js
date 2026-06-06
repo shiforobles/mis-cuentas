@@ -8,6 +8,7 @@ import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dolla
 import { formatARS, formatUSD, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
 import { $, showToast, debounce, generateId, escapeHtml } from '../utils/helpers.js';
+import { isSupabaseConfigured, signIn, signUp, signOut, getCurrentUser, onAuthChange } from '../services/supabase.js';
 
 let configData = null;
 let portfolioData = null;
@@ -25,7 +26,13 @@ export async function renderSettings() {
   main.innerHTML = `
     <div class="settings-view fade-in">
       <h1 class="settings-title">⚙️ Configuración</h1>
-      
+
+      <!-- Cuenta / Sincronización -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">☁️ Cuenta y sincronización</h2>
+        <div id="account-section"></div>
+      </div>
+
       <!-- Año -->
       <div class="settings-group">
         <h2 class="settings-group__title">📅 Año de trabajo</h2>
@@ -202,6 +209,103 @@ export async function renderSettings() {
   renderEmergenciaSelector();
   renderRecurringList();
   setupEventListeners();
+  renderAccountSection();
+}
+
+// ─── CUENTA / SINCRONIZACIÓN (Fase 1: auth + conexión) ──────
+
+/**
+ * Renderiza la sección de cuenta según el estado: sin configurar, deslogueado
+ * (formulario) o logueado (estado + logout). El sync todavía no está activo
+ * en esta fase: solo conecta la cuenta.
+ */
+async function renderAccountSection() {
+  const cont = $('#account-section');
+  if (!cont) return;
+
+  // Sin credenciales → la app funciona igual, offline. No mostramos login.
+  if (!isSupabaseConfigured()) {
+    cont.innerHTML = `
+      <div class="form-field__hint">
+        Sincronización no configurada. La app funciona normalmente y guarda todo en este dispositivo.
+        Para sincronizar entre compu y celular, configurá las credenciales de Supabase (ver <code>.env.example</code>).
+      </div>`;
+    return;
+  }
+
+  const user = await getCurrentUser();
+
+  if (user) {
+    cont.innerHTML = `
+      <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+        Conectado como <strong>${escapeHtml(user.email || 'usuario')}</strong>.
+        <span class="badge badge--success" style="margin-left:6px">Cuenta vinculada</span>
+      </div>
+      <div class="form-field__hint" style="margin-bottom:var(--space-3);color:var(--color-text-muted)">
+        La sincronización de datos se activa en una próxima etapa. Por ahora la cuenta queda conectada.
+      </div>
+      <button class="btn btn--secondary" id="btn-auth-logout" style="width:100%">Cerrar sesión</button>`;
+
+    $('#btn-auth-logout')?.addEventListener('click', async () => {
+      const btn = $('#btn-auth-logout');
+      btn.disabled = true; btn.textContent = 'Cerrando…';
+      const { error } = await signOut();
+      if (error) { showToast('Error al cerrar sesión: ' + error, 'error'); btn.disabled = false; btn.textContent = 'Cerrar sesión'; return; }
+      showToast('Sesión cerrada', 'success');
+      renderAccountSection();
+    });
+    return;
+  }
+
+  // Deslogueado → formulario email + contraseña (login o crear cuenta).
+  cont.innerHTML = `
+    <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+      Iniciá sesión para sincronizar tus datos entre dispositivos. La app sigue funcionando offline en este dispositivo.
+    </div>
+    <div class="form-field">
+      <label class="form-field__label" for="auth-email">Email</label>
+      <input class="form-field__input" type="email" id="auth-email" autocomplete="username" placeholder="vos@email.com" />
+    </div>
+    <div class="form-field">
+      <label class="form-field__label" for="auth-password">Contraseña</label>
+      <input class="form-field__input" type="password" id="auth-password" autocomplete="current-password" placeholder="••••••••" />
+    </div>
+    <div style="display:flex;gap:var(--space-2);margin-top:var(--space-2)">
+      <button class="btn btn--primary" id="btn-auth-login" style="flex:1">Iniciar sesión</button>
+      <button class="btn btn--ghost" id="btn-auth-signup" style="flex:1">Crear cuenta</button>
+    </div>
+    <div id="auth-msg" style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)"></div>`;
+
+  const getCreds = () => ({
+    email: $('#auth-email').value.trim(),
+    password: $('#auth-password').value,
+  });
+  const setMsg = (txt, isErr = false) => {
+    const m = $('#auth-msg');
+    if (m) { m.textContent = txt; m.style.color = isErr ? 'var(--color-danger-text)' : 'var(--color-text-muted)'; }
+  };
+
+  $('#btn-auth-login')?.addEventListener('click', async () => {
+    const { email, password } = getCreds();
+    if (!email || !password) { setMsg('Completá email y contraseña.', true); return; }
+    const btn = $('#btn-auth-login'); btn.disabled = true; btn.textContent = 'Entrando…';
+    const { user: u, error } = await signIn(email, password);
+    if (error) { setMsg(error, true); btn.disabled = false; btn.textContent = 'Iniciar sesión'; return; }
+    showToast(`Sesión iniciada (${u?.email || ''})`, 'success');
+    renderAccountSection();
+  });
+
+  $('#btn-auth-signup')?.addEventListener('click', async () => {
+    const { email, password } = getCreds();
+    if (!email || !password) { setMsg('Completá email y contraseña.', true); return; }
+    const btn = $('#btn-auth-signup'); btn.disabled = true; btn.textContent = 'Creando…';
+    const { error, needsConfirm } = await signUp(email, password);
+    btn.disabled = false; btn.textContent = 'Crear cuenta';
+    if (error) { setMsg(error, true); return; }
+    if (needsConfirm) { setMsg('Cuenta creada. Revisá tu email para confirmarla y después iniciá sesión.'); return; }
+    showToast('Cuenta creada e iniciada', 'success');
+    renderAccountSection();
+  });
 }
 
 // ─── RECURRING LIST (F5) ────────────────────────────────
