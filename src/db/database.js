@@ -239,6 +239,12 @@ export async function removeFromOutbox(key) {
   return db.delete('syncOutbox', key);
 }
 
+/** Vacía el outbox (descarta los cambios locales pendientes). */
+export async function clearOutbox() {
+  const db = await getDB();
+  return db.clear('syncOutbox');
+}
+
 /**
  * Encola TODOS los registros locales de los stores sincronizables como pendientes
  * de subir (push inicial / "subir todo"). NO pisa el `updatedAt` de los que ya lo

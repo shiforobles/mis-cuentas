@@ -241,9 +241,43 @@ async function renderAccountSection() {
         Conectado como <strong>${escapeHtml(user.email || 'usuario')}</strong>.
         <span class="badge badge--success" style="margin-left:6px">Cuenta vinculada</span>
       </div>
-      <button class="btn btn--primary" id="btn-sync-push" style="width:100%;margin-bottom:var(--space-2)">⬆️ Subir mis datos a la nube</button>
+      <button class="btn btn--primary" id="btn-sync-now" style="width:100%;margin-bottom:var(--space-2)">🔄 Sincronizar ahora</button>
+      <button class="btn btn--ghost btn--sm" id="btn-sync-push" style="width:100%;margin-bottom:var(--space-2)">⬆️ Subir mis datos a la nube</button>
       <div id="sync-push-msg" style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-bottom:var(--space-3)"></div>
       <button class="btn btn--secondary" id="btn-auth-logout" style="width:100%">Cerrar sesión</button>`;
+
+    $('#btn-sync-now')?.addEventListener('click', async () => {
+      const btn = $('#btn-sync-now');
+      const msg = $('#sync-push-msg');
+      btn.disabled = true; btn.textContent = 'Sincronizando…';
+      if (msg) { msg.textContent = ''; msg.style.color = 'var(--color-text-muted)'; }
+      try {
+        const sync = await import('../services/sync.js');
+        // Primer merge: si la nube ya tiene datos y este equipo nunca mergeó, preguntar.
+        if (await sync.isFirstMergePending()) {
+          const mode = await showFirstMergeModal();
+          if (!mode) { btn.disabled = false; btn.textContent = '🔄 Sincronizar ahora'; return; }
+          const r = await sync.firstSync(mode);
+          const pulled = r.pull?.pulled || 0, pushed = r.push?.pushed || 0;
+          showToast(`☁️ Primer merge (${mode}): ${pushed} subidos, ${pulled} bajados`, 'success');
+        } else {
+          const r = await sync.syncNow();
+          const up = r.push?.pushed || 0, down = r.pull?.pulled || 0, del = r.pull?.deletedLocal || 0;
+          if (r.ok) {
+            showToast(`🔄 Sincronizado: ↑${up} ↓${down}${del ? ' · '+del+' borrados' : ''}`, 'success');
+            if (msg) msg.textContent = `Subidos ${up}, bajados ${down}${del ? ', ' + del + ' borrados localmente' : ''}.`;
+          } else {
+            if (msg) { msg.style.color = 'var(--color-danger-text)'; msg.textContent = 'Sync con errores — ver consola (F12).'; }
+            showToast('Sync con errores', 'error');
+          }
+        }
+        // Refrescar la vista: el pull pudo cambiar datos locales.
+        renderSettings();
+      } catch (err) {
+        showToast('Error al sincronizar: ' + err.message, 'error');
+        btn.disabled = false; btn.textContent = '🔄 Sincronizar ahora';
+      }
+    });
 
     $('#btn-sync-push')?.addEventListener('click', async () => {
       const btn = $('#btn-sync-push');
@@ -338,6 +372,39 @@ async function renderAccountSection() {
     if (needsConfirm) { setMsg('Cuenta creada. Revisá tu email para confirmarla y después iniciá sesión.'); return; }
     showToast('Cuenta creada e iniciada', 'success');
     renderAccountSection();
+  });
+}
+
+/**
+ * Muestra el cartel de "primer merge" cuando hay datos en la nube y en este
+ * dispositivo. Devuelve la elección del usuario o null si cancela.
+ * @returns {Promise<'cloud'|'local'|'merge'|null>}
+ */
+function showFirstMergeModal() {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;z-index:1000;padding:var(--space-4)';
+    overlay.innerHTML = `
+      <div class="card" style="max-width:440px;width:100%;padding:var(--space-5)">
+        <h3 style="margin:0 0 var(--space-2);font-size:var(--font-size-lg)">☁️ Sincronización inicial</h3>
+        <p style="font-size:var(--font-size-sm);color:var(--color-text-secondary);margin-bottom:var(--space-4)">
+          Encontramos datos <strong>en la nube</strong> y <strong>en este dispositivo</strong>. ¿Cómo querés resolverlo esta primera vez?
+        </p>
+        <div style="display:flex;flex-direction:column;gap:var(--space-2)">
+          <button class="btn btn--primary" data-merge="cloud">⬇️ Usar los de la nube<br><span style="font-size:var(--font-size-xs);opacity:.8">Reemplaza lo de este dispositivo (recomendado en un 2º equipo)</span></button>
+          <button class="btn btn--secondary" data-merge="local">⬆️ Subir los de este dispositivo<br><span style="font-size:var(--font-size-xs);opacity:.8">Manda lo local a la nube</span></button>
+          <button class="btn btn--secondary" data-merge="merge">🔀 Combinar (last-write-wins)<br><span style="font-size:var(--font-size-xs);opacity:.8">Gana el cambio más reciente en cada registro</span></button>
+          <button class="btn btn--ghost btn--sm" data-merge="">Cancelar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    overlay.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-merge]');
+      if (!btn && e.target !== overlay) return;
+      const mode = btn ? btn.dataset.merge : '';
+      overlay.remove();
+      resolve(mode || null);
+    });
   });
 }
 
