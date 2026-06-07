@@ -8,6 +8,7 @@ import { navigate } from '../router.js';
 import { ROUTES } from '../utils/constants.js';
 import { dbGet, dbPut } from '../db/database.js';
 import { seedYear } from '../db/seed.js';
+import { isSupabaseConfigured } from '../services/supabase.js';
 
 /**
  * Renderiza el header de la app con selector de año.
@@ -30,6 +31,7 @@ export async function renderHeader() {
       <button class="year-nav__btn" id="btn-year-next" aria-label="Año siguiente">▶</button>
     </div>
     <div class="app-header__actions">
+      ${isSupabaseConfigured() ? `<button class="btn btn--ghost btn--icon" id="btn-sync-status" title="Sincronización" aria-label="Estado de sincronización">☁️</button>` : ''}
       <button class="btn btn--ghost btn--icon" id="btn-theme" title="Cambiar tema" aria-label="Cambiar tema">
         🌙
       </button>
@@ -44,7 +46,44 @@ export async function renderHeader() {
   const themeBtn = $('#btn-theme', header);
   themeBtn.addEventListener('click', toggleTheme);
 
+  // Indicador de sincronización
+  if (isSupabaseConfigured()) setupSyncIndicator();
+
   updateThemeButton();
+}
+
+/** Mapa de estado de sync → ícono, color y texto del indicador del header. */
+const SYNC_VIEW = {
+  disabled: { icon: '☁️', color: 'var(--color-text-muted)', label: 'Sync desactivado' },
+  offline:  { icon: '📴', color: 'var(--color-text-muted)', label: 'Sin conexión' },
+  syncing:  { icon: '🔄', color: 'var(--color-info-text)', label: 'Sincronizando…' },
+  pending:  { icon: '🟡', color: 'var(--color-warning-text, #d97706)', label: 'Cambios sin sincronizar' },
+  synced:   { icon: '✅', color: 'var(--color-success-text)', label: 'Sincronizado' },
+  error:    { icon: '⚠️', color: 'var(--color-danger-text)', label: 'Error de sync' },
+  merge:    { icon: '🔀', color: 'var(--color-warning-text, #d97706)', label: 'Sincronización inicial pendiente' },
+};
+
+/** Conecta el botón del header al estado de sync (ícono + click para sincronizar). */
+async function setupSyncIndicator() {
+  const btn = $('#btn-sync-status');
+  if (!btn) return;
+  const sync = await import('../services/sync.js');
+
+  sync.onSyncStatus(({ status, info }) => {
+    const b = document.getElementById('btn-sync-status');
+    if (!b) return;
+    const v = SYNC_VIEW[status] || SYNC_VIEW.disabled;
+    b.textContent = v.icon;
+    b.style.color = v.color;
+    b.title = info || v.label;
+    b.style.animation = status === 'syncing' ? 'spin 1s linear infinite' : '';
+  });
+
+  btn.addEventListener('click', async () => {
+    const { status } = sync.getSyncStatus();
+    if (status === 'merge') { navigate(ROUTES.SETTINGS); return; } // resolver el primer merge en Config
+    sync.autoSync();
+  });
 }
 
 /**

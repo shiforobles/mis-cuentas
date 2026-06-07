@@ -930,3 +930,9 @@ tr:hover .row-delete,
   font-size: var(--font-size-xs);
   font-weight: 600;
 }
+
+/* Indicador de sincronización (header): ícono girando mientras sincroniza */
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}

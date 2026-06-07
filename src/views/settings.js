@@ -270,6 +270,7 @@ async function renderAccountSection() {
             if (msg) { msg.style.color = 'var(--color-danger-text)'; msg.textContent = 'Sync con errores — ver consola (F12).'; }
             showToast('Sync con errores', 'error');
           }
+          await sync.refreshSyncStatus();
         }
         // Refrescar la vista: el pull pudo cambiar datos locales.
         renderSettings();

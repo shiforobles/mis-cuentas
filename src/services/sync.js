@@ -7,11 +7,12 @@
  * reintentar después (no se pierden).
  */
 
-import { getSupabase, getCurrentUser } from './supabase.js';
+import { getSupabase, getCurrentUser, isSupabaseConfigured, onAuthChange } from './supabase.js';
 import {
   dbGet, dbPutRaw, dbDeleteRaw, getOutbox, removeFromOutbox, clearOutbox,
   enqueueAllForInitialPush, getSyncMeta, setSyncMeta,
 } from '../db/database.js';
+import { debounce } from '../utils/helpers.js';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
 const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? -1 : t; };
@@ -113,6 +114,7 @@ export async function fullPush() {
   await enqueueAllForInitialPush();
   const r = await pushChanges();
   await markFirstMergeDone();
+  await refreshSyncStatus();
   return r;
 }
 
@@ -237,6 +239,99 @@ async function markFirstMergeDone() {
   await setSyncMeta(meta);
 }
 
+// ─── ESTADO DE SYNC + AUTO-SYNC (Fase 5) ────────────────────
+// Estados posibles del indicador:
+//  disabled | offline | syncing | pending | synced | error | merge
+let _status = 'disabled';
+let _info = '';
+let _syncing = false;
+const _listeners = new Set();
+
+/** Estado actual del sync. @returns {{status:string, info:string}} */
+export function getSyncStatus() { return { status: _status, info: _info }; }
+
+/** Suscribe al estado de sync. Llama al cb ya mismo con el estado actual. */
+export function onSyncStatus(cb) {
+  _listeners.add(cb);
+  try { cb(getSyncStatus()); } catch { /* noop */ }
+  return () => _listeners.delete(cb);
+}
+
+function setStatus(status, info = '') {
+  _status = status; _info = info;
+  _listeners.forEach(cb => { try { cb(getSyncStatus()); } catch { /* noop */ } });
+}
+
+/** Estado "en reposo": pendiente si hay outbox, si no sincronizado. */
+export async function refreshSyncStatus() {
+  if (!isSupabaseConfigured()) { setStatus('disabled', 'Sync no configurado'); return; }
+  if (!(await getCurrentUser())) { setStatus('disabled', 'Iniciá sesión para sincronizar'); return; }
+  if (!navigator.onLine) { setStatus('offline', 'Sin conexión'); return; }
+  const out = await getOutbox();
+  if (out.length) setStatus('pending', `${out.length} cambio(s) sin subir`);
+  else setStatus('synced', 'Todo sincronizado');
+}
+
+/**
+ * Dispara una sincronización automática, respetando estados:
+ * sin config/sesión → disabled; sin red → offline; primer merge → merge (manual);
+ * en curso → no reentra. Pensada para llamarse al abrir, al cambiar datos
+ * (debounce) y al reconectar.
+ */
+export async function autoSync() {
+  if (!isSupabaseConfigured()) { setStatus('disabled', 'Sync no configurado'); return; }
+  const user = await getCurrentUser();
+  if (!user) { setStatus('disabled', 'Iniciá sesión para sincronizar'); return; }
+  if (!navigator.onLine) { setStatus('offline', 'Sin conexión'); return; }
+  if (_syncing) return;
+
+  // El primer merge requiere decisión del usuario: no lo resolvemos solos.
+  if (await isFirstMergePending()) { setStatus('merge', 'Sincronización inicial pendiente'); return; }
+
+  _syncing = true;
+  setStatus('syncing', 'Sincronizando…');
+  try {
+    const r = await syncNow();
+    if (r.ok) await refreshSyncStatus();
+    else setStatus('error', 'Errores al sincronizar (ver consola)');
+  } catch (err) {
+    if (!navigator.onLine) setStatus('offline', 'Sin conexión');
+    else setStatus('error', err?.message || 'Error de sync');
+  } finally {
+    _syncing = false;
+  }
+}
+
+const _debouncedAuto = debounce(() => autoSync(), 4000);
+
+/**
+ * Inicializa el auto-sync y el indicador. Llamar una vez al arrancar la app.
+ * Engancha: cambios locales (evento mc-sync-dirty, con debounce), online/offline,
+ * y cambios de sesión. No rompe nada si Supabase no está configurado.
+ */
+export function initSync() {
+  // Cambios locales (los dispara dbPut/dbDelete vía evento global).
+  window.addEventListener('mc-sync-dirty', () => {
+    if (_status === 'synced') setStatus('pending', 'Cambios sin subir');
+    _debouncedAuto();
+  });
+
+  // Conexión
+  window.addEventListener('online', () => autoSync());
+  window.addEventListener('offline', () => setStatus('offline', 'Sin conexión'));
+
+  // Sesión
+  onAuthChange((event) => {
+    if (event === 'SIGNED_OUT') setStatus('disabled', 'Sesión cerrada');
+    else autoSync();
+  });
+
+  // Estado inicial
+  if (!isSupabaseConfigured()) { setStatus('disabled', 'Sync no configurado'); return; }
+  if (!navigator.onLine) { setStatus('offline', 'Sin conexión'); return; }
+  autoSync();
+}
+
 /**
  * Resuelve el primer merge según la elección del usuario:
  *  - 'cloud': la nube manda (baja todo, pisa lo local, descarta pendientes).
@@ -256,5 +351,6 @@ export async function firstSync(mode) {
     result.pull = await pullChanges();
   }
   await markFirstMergeDone();
+  await refreshSyncStatus();
   return result;
 }

@@ -218,6 +218,10 @@ async function enqueueOutbox(db, store, id, op, updatedAt) {
   if (id == null) return;
   try {
     await db.put('syncOutbox', { key: `${store}:${id}`, store, recordId: String(id), op, updatedAt });
+    // Avisar al motor de sync que hay un cambio local (auto-sync con debounce).
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('mc-sync-dirty'));
+    }
   } catch { /* outbox no disponible (DB vieja): ignorar, no romper el guardado */ }
 }
 

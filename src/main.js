@@ -53,7 +53,12 @@ async function init() {
     }).catch(e => {
       console.warn('No se pudo actualizar el dólar:', e.message);
     });
-    
+
+    // 7. Inicializar sincronización (auto-sync + indicador). No bloqueante y
+    //    seguro si Supabase no está configurado.
+    import('./services/sync.js').then(({ initSync }) => initSync())
+      .catch(e => console.warn('Sync no inicializado:', e.message));
+
     console.log('✓ Mis Cuentas inicializada');
   } catch (error) {
     console.error('Error inicializando la app:', error);
