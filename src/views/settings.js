@@ -254,13 +254,24 @@ async function renderAccountSection() {
         const { fullPush } = await import('../services/sync.js');
         const r = await fullPush();
         if (r.ok) {
-          if (msg) msg.textContent = `Listo: ${r.pushed} subidos, ${r.deleted} borrados.`;
+          if (msg) { msg.textContent = `Listo: ${r.pushed} subidos, ${r.deleted} borrados.`; msg.style.color = 'var(--color-text-muted)'; }
           showToast(`☁️ Datos subidos (${r.pushed})`, 'success');
         } else if (r.reason === 'no-auth') {
           showToast('Iniciá sesión primero', 'warning');
         } else {
-          if (msg) { msg.textContent = `Algunos fallaron (${r.failed}). Reintentá.`; msg.style.color = 'var(--color-danger-text)'; }
-          showToast('Sync con errores, quedó pendiente', 'error');
+          // Mostrar el primer error real + resumen por tabla; el detalle completo
+          // queda en la consola (console.table con los 15 registros).
+          const fails = r.failures || [];
+          const porTabla = fails.reduce((a, f) => { a[f.tabla] = (a[f.tabla] || 0) + 1; return a; }, {});
+          const resumen = Object.entries(porTabla).map(([t, n]) => `${t}: ${n}`).join(', ');
+          const primero = fails[0];
+          if (msg) {
+            msg.style.color = 'var(--color-danger-text)';
+            msg.innerHTML = `Fallaron ${r.failed} (${escapeHtml(resumen)}).<br>` +
+              (primero ? `Ej (${escapeHtml(primero.tabla)}): ${escapeHtml(primero.error || '')}${primero.details ? ' — ' + escapeHtml(primero.details) : ''}<br>` : '') +
+              `Detalle completo en la consola (F12).`;
+          }
+          showToast('Sync con errores — ver detalle abajo / consola', 'error');
         }
       } catch (err) {
         showToast('Error al subir: ' + err.message, 'error');

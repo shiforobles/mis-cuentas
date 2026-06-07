@@ -39,6 +39,7 @@ export async function pushChanges() {
 
   const outbox = await getOutbox();
   let pushed = 0, deleted = 0, failed = 0;
+  const failures = [];
 
   for (const entry of outbox) {
     const table = STORE_TO_TABLE[entry.store];
@@ -70,12 +71,30 @@ export async function pushChanges() {
       await removeFromOutbox(entry.key);
     } catch (err) {
       failed++;
-      console.warn('[sync] push falló para', entry.key, err?.message || err);
+      // PostgrestError trae message/code/details/hint. Capturamos todo.
+      failures.push({
+        tabla: table,
+        store: entry.store,
+        id: entry.recordId,
+        op: entry.op,
+        error: err?.message || String(err),
+        code: err?.code,
+        details: err?.details,
+        hint: err?.hint,
+      });
       // se deja la entrada en el outbox para reintentar
     }
   }
 
-  return { ok: failed === 0, pushed, deleted, failed };
+  if (failures.length) {
+    // Resumen agrupado por tabla + detalle de cada registro fallido.
+    const porTabla = failures.reduce((acc, f) => { acc[f.tabla] = (acc[f.tabla] || 0) + 1; return acc; }, {});
+    console.error('[sync] Push: %d registro(s) fallaron. Por tabla:', failures.length, porTabla);
+    console.table(failures.map(f => ({ tabla: f.tabla, id: f.id, op: f.op, code: f.code, error: f.error, details: f.details, hint: f.hint })));
+    console.error('[sync] Detalle completo de fallos:', failures);
+  }
+
+  return { ok: failed === 0, pushed, deleted, failed, failures };
 }
 
 /**
