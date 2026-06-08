@@ -28,6 +28,51 @@ const STORE_TO_TABLE = {
 };
 
 /**
+ * Valida que un registro tenga la FORMA esperada para su store ANTES de subirlo
+ * o de escribirlo localmente. Blindaje contra corrupción: si un dato llegó con
+ * la estructura de otro store (p.ej. la distribución ideal de `config` metida en
+ * `months`), o con el id cambiado, se rechaza y no toca los datos buenos.
+ * @returns {{ok: boolean, reason?: string}}
+ */
+export function validateForStore(store, data, id) {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    return { ok: false, reason: 'data no es un objeto' };
+  }
+  // El id embebido en el blob debe coincidir con la clave de la fila
+  // (atrapa cruces entre tablas/registros).
+  if (data.id != null && id != null && String(data.id) !== String(id)) {
+    return { ok: false, reason: `id embebido (${data.id}) ≠ id de fila (${id})` };
+  }
+  switch (store) {
+    case 'config':
+      if (id !== 'global') return { ok: false, reason: `config con id inesperado: ${id}` };
+      break;
+    case 'months': {
+      if (!Array.isArray(data.ingresos)) return { ok: false, reason: 'months sin ingresos[]' };
+      if (!data.egresos || typeof data.egresos !== 'object' || Array.isArray(data.egresos)) {
+        return { ok: false, reason: 'months sin egresos{}' };
+      }
+      // Cada ingreso debe ser un objeto con descripcion de TIPO TEXTO. Atrapa:
+      // números sueltos (distribución ideal filtrada) y descripciones
+      // reemplazadas por números (corrimiento de campos de una planilla).
+      const ingOk = data.ingresos.every(it => it && typeof it === 'object' && typeof it.descripcion === 'string');
+      if (!ingOk) return { ok: false, reason: 'ingresos con descripcion no-texto (datos corridos/mal formados)' };
+      break;
+    }
+    case 'portfolio':
+      if (!data.liquidez || !data.inversiones) return { ok: false, reason: 'portfolio sin liquidez/inversiones' };
+      break;
+    case 'transactions':
+      if (typeof data.amount !== 'number' || !data.itemId) return { ok: false, reason: 'transacción sin amount/itemId' };
+      break;
+    // portfolioHistory / recurring: con que sea objeto con id alcanza.
+    default:
+      break;
+  }
+  return { ok: true };
+}
+
+/**
  * Sube al servidor las entradas pendientes del outbox (puts y borrados).
  * - put    → upsert { id, user_id, data, updated_at } en la tabla.
  * - delete → borra la fila + deja tombstone en sync_deletions.
@@ -63,6 +108,13 @@ export async function pushChanges() {
       } else {
         const record = await dbGet(entry.store, entry.recordId);
         if (!record) { await removeFromOutbox(entry.key); continue; } // ya no existe local
+        // No subir registros con forma inválida (evita poisonear la nube).
+        const v = validateForStore(entry.store, record, entry.recordId);
+        if (!v.ok) {
+          console.error(`[sync] PUSH bloqueado por validación (${entry.store}:${entry.recordId}): ${v.reason}`, record);
+          await removeFromOutbox(entry.key);
+          continue;
+        }
         const row = {
           id: entry.recordId,
           user_id: user.id,
@@ -159,6 +211,14 @@ export async function pullChanges({ remoteWins = false } = {}) {
       const lMs = local?.updatedAt ? ms(local.updatedAt) : -1;
       // LWW: si lo local es igual o más nuevo, lo dejamos (salvo remoteWins).
       if (!remoteWins && local && lMs >= rMs) continue;
+
+      // Blindaje: no sobrescribir lo local con un registro de forma inválida.
+      const v = validateForStore(store, row.data, row.id);
+      if (!v.ok) {
+        failed++;
+        console.error(`[sync] PULL rechazado por validación (${store}:${row.id}): ${v.reason}`, row.data);
+        continue;
+      }
 
       await dbPutRaw(store, row.data);
       pulled++;
