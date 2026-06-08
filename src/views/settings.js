@@ -887,8 +887,13 @@ function setupEventListeners() {
       const text = await file.text();
       const data = JSON.parse(text);
       if (confirm('¿Importar estos datos? Se reemplazarán todos los datos actuales.')) {
-        await importAllData(data);
-        showToast('Datos importados correctamente', 'success');
+        const res = await importAllData(data);
+        if (res?.skipped > 0) {
+          showToast(`Importado: ${res.imported} ok, ${res.skipped} descartado(s) por forma inválida (ver consola)`, 'error');
+          await new Promise(r => setTimeout(r, 2500)); // que alcance a leerse antes del reload
+        } else {
+          showToast('Datos importados correctamente', 'success');
+        }
         window.location.reload();
       }
     } catch (err) {

@@ -13,6 +13,7 @@ import {
   enqueueAllForInitialPush, getSyncMeta, setSyncMeta,
 } from '../db/database.js';
 import { debounce } from '../utils/helpers.js';
+import { validateForStore } from '../utils/sync-validate.js';
 
 const EPOCH = '1970-01-01T00:00:00.000Z';
 const ms = (iso) => { const t = Date.parse(iso); return Number.isNaN(t) ? -1 : t; };
@@ -26,51 +27,6 @@ const STORE_TO_TABLE = {
   transactions: 'transactions',
   recurring: 'recurring',
 };
-
-/**
- * Valida que un registro tenga la FORMA esperada para su store ANTES de subirlo
- * o de escribirlo localmente. Blindaje contra corrupción: si un dato llegó con
- * la estructura de otro store (p.ej. la distribución ideal de `config` metida en
- * `months`), o con el id cambiado, se rechaza y no toca los datos buenos.
- * @returns {{ok: boolean, reason?: string}}
- */
-export function validateForStore(store, data, id) {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) {
-    return { ok: false, reason: 'data no es un objeto' };
-  }
-  // El id embebido en el blob debe coincidir con la clave de la fila
-  // (atrapa cruces entre tablas/registros).
-  if (data.id != null && id != null && String(data.id) !== String(id)) {
-    return { ok: false, reason: `id embebido (${data.id}) ≠ id de fila (${id})` };
-  }
-  switch (store) {
-    case 'config':
-      if (id !== 'global') return { ok: false, reason: `config con id inesperado: ${id}` };
-      break;
-    case 'months': {
-      if (!Array.isArray(data.ingresos)) return { ok: false, reason: 'months sin ingresos[]' };
-      if (!data.egresos || typeof data.egresos !== 'object' || Array.isArray(data.egresos)) {
-        return { ok: false, reason: 'months sin egresos{}' };
-      }
-      // Cada ingreso debe ser un objeto con descripcion de TIPO TEXTO. Atrapa:
-      // números sueltos (distribución ideal filtrada) y descripciones
-      // reemplazadas por números (corrimiento de campos de una planilla).
-      const ingOk = data.ingresos.every(it => it && typeof it === 'object' && typeof it.descripcion === 'string');
-      if (!ingOk) return { ok: false, reason: 'ingresos con descripcion no-texto (datos corridos/mal formados)' };
-      break;
-    }
-    case 'portfolio':
-      if (!data.liquidez || !data.inversiones) return { ok: false, reason: 'portfolio sin liquidez/inversiones' };
-      break;
-    case 'transactions':
-      if (typeof data.amount !== 'number' || !data.itemId) return { ok: false, reason: 'transacción sin amount/itemId' };
-      break;
-    // portfolioHistory / recurring: con que sea objeto con id alcanza.
-    default:
-      break;
-  }
-  return { ok: true };
-}
 
 /**
  * Sube al servidor las entradas pendientes del outbox (puts y borrados).

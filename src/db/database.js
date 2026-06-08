@@ -337,31 +337,50 @@ export async function exportAllData() {
 }
 
 /**
- * Importa datos JSON a la base de datos (reemplaza todo).
+ * Importa datos JSON a la base de datos (reemplaza todo). Valida la FORMA de
+ * cada registro contra su store: descarta (no importa) los que tengan estructura
+ * inválida, para que un backup viejo/ajeno no corrompa los datos (p.ej. filas con
+ * forma de config metidas en months). Devuelve un resumen de lo importado/saltado.
  * @param {Object} data
- * @returns {Promise<void>}
+ * @returns {Promise<{imported:number, skipped:number, skippedDetail:Array}>}
  */
 export async function importAllData(data) {
+  const { validateForStore } = await import('../utils/sync-validate.js');
   const db = await getDB();
-  
+
   const storeNames = ['config', 'months', 'portfolio', 'portfolioHistory', 'transactions', 'recurring'];
   const tx = db.transaction(storeNames, 'readwrite');
-  
+
   // Limpiar stores
   for (const name of storeNames) {
     await tx.objectStore(name).clear();
   }
-  
-  // Importar datos
+
+  let imported = 0, skipped = 0;
+  const skippedDetail = [];
+
+  // Importar datos (validando cada registro)
   for (const name of storeNames) {
-    if (data[name]) {
-      for (const item of data[name]) {
-        await tx.objectStore(name).put(item);
+    if (!Array.isArray(data[name])) continue;
+    for (const item of data[name]) {
+      const v = validateForStore(name, item, item?.id);
+      if (!v.ok) {
+        skipped++;
+        skippedDetail.push({ store: name, id: item?.id, reason: v.reason });
+        console.error(`[import] Registro descartado (${name}:${item?.id}): ${v.reason}`, item);
+        continue;
       }
+      await tx.objectStore(name).put(item);
+      imported++;
     }
   }
-  
+
   await tx.done;
+
+  if (skipped > 0) {
+    console.warn(`[import] ${skipped} registro(s) con forma inválida fueron descartados.`, skippedDetail);
+  }
+  return { imported, skipped, skippedDetail };
 }
 
 /**
