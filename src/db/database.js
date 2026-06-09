@@ -312,6 +312,33 @@ export async function dbGetTransactionsByItem(itemId) {
 }
 
 /**
+ * Escanea TODOS los registros locales de los stores sincronizables y valida su
+ * forma (sin red, solo lectura). Sirve para confirmar que los datos están sanos
+ * ANTES de reactivar la sincronización.
+ * @returns {Promise<{ok:boolean, total:number, valid:number, byStore:Object, invalid:Array<{store,id,reason}>}>}
+ */
+export async function checkLocalIntegrity() {
+  const { validateForStore } = await import('../utils/sync-validate.js');
+  const report = { ok: true, total: 0, valid: 0, byStore: {}, invalid: [] };
+  for (const store of SYNCED_STORES) {
+    const all = await dbGetAll(store);
+    report.byStore[store] = { total: all.length, invalid: 0 };
+    for (const rec of all) {
+      report.total++;
+      const v = validateForStore(store, rec, rec?.id);
+      if (v.ok) {
+        report.valid++;
+      } else {
+        report.ok = false;
+        report.byStore[store].invalid++;
+        report.invalid.push({ store, id: rec?.id, reason: v.reason });
+      }
+    }
+  }
+  return report;
+}
+
+/**
  * Exporta toda la base de datos como JSON.
  * @returns {Promise<Object>}
  */

@@ -3,7 +3,7 @@
  * Editar % ideales, categorías, dólar, año, importar/exportar, gastos recurrentes.
  */
 
-import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUserData } from '../db/database.js';
+import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUserData, checkLocalIntegrity } from '../db/database.js';
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
 import { formatARS, formatUSD, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
@@ -139,7 +139,19 @@ export async function renderSettings() {
             </div>
             <span class="action-item__arrow">→</span>
           </div>
-          
+
+          <div class="action-item" id="action-check-integrity">
+            <div class="action-item__left">
+              <span class="action-item__icon">🔎</span>
+              <div>
+                <div class="action-item__text">Verificar integridad de datos</div>
+                <div class="action-item__desc">Escaneá tus datos y confirmá que están sanos antes de sincronizar</div>
+              </div>
+            </div>
+            <span class="action-item__arrow">→</span>
+          </div>
+          <div id="integrity-result" style="display:none;margin:0 0 var(--space-3)"></div>
+
           <div class="action-item" id="action-import-excel">
             <div class="action-item__left">
               <span class="action-item__icon">📊</span>
@@ -880,6 +892,42 @@ function setupEventListeners() {
     $('#file-input-json')?.click();
   });
   
+  // Verificar integridad de datos (scan local, sin red)
+  $('#action-check-integrity')?.addEventListener('click', async () => {
+    const box = $('#integrity-result');
+    if (box) { box.style.display = 'block'; box.innerHTML = '<div class="form-field__hint">Escaneando…</div>'; }
+    try {
+      const rep = await checkLocalIntegrity();
+      if (!box) return;
+      if (rep.ok) {
+        box.innerHTML = `
+          <div class="card" style="border-left:3px solid var(--color-success-text);padding:var(--space-3)">
+            <div style="font-weight:700;color:var(--color-success-text);margin-bottom:var(--space-1)">✅ Datos 100% sanos</div>
+            <div class="form-field__hint">Se revisaron <strong>${rep.total}</strong> registros y todos tienen la forma correcta. Podés sincronizar tranquilo.</div>
+            <div class="form-field__hint" style="margin-top:var(--space-2);font-size:var(--font-size-xs)">
+              ${Object.entries(rep.byStore).map(([s, v]) => `${s}: ${v.total}`).join(' · ')}
+            </div>
+          </div>`;
+        showToast('✅ Integridad OK: todo sano', 'success');
+      } else {
+        const lista = rep.invalid.slice(0, 20).map(i =>
+          `<li><strong>${escapeHtml(i.store)}</strong> · <code>${escapeHtml(String(i.id))}</code> — ${escapeHtml(i.reason)}</li>`
+        ).join('');
+        box.innerHTML = `
+          <div class="card" style="border-left:3px solid var(--color-danger-text);padding:var(--space-3)">
+            <div style="font-weight:700;color:var(--color-danger-text);margin-bottom:var(--space-1)">⚠️ Se encontraron ${rep.invalid.length} registro(s) con problemas</div>
+            <div class="form-field__hint">De ${rep.total} revisados, ${rep.valid} están bien. NO sincronices hasta limpiar estos:</div>
+            <ul style="margin:var(--space-2) 0 0;padding-left:var(--space-4);font-size:var(--font-size-xs);color:var(--color-text-secondary)">${lista}</ul>
+            ${rep.invalid.length > 20 ? `<div class="form-field__hint" style="font-size:var(--font-size-xs)">…y ${rep.invalid.length - 20} más (ver consola).</div>` : ''}
+          </div>`;
+        console.error('[integridad] Registros inválidos:', rep.invalid);
+        showToast(`⚠️ ${rep.invalid.length} registro(s) con problemas`, 'error');
+      }
+    } catch (err) {
+      if (box) box.innerHTML = `<div class="form-field__hint" style="color:var(--color-danger-text)">Error al verificar: ${escapeHtml(err.message)}</div>`;
+    }
+  });
+
   $('#file-input-json')?.addEventListener('change', async (e) => {
     const file = e.target.files[0];
     if (!file) return;
