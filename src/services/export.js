@@ -33,7 +33,7 @@ export async function exportToExcel() {
     if (!m) { dashRows.push([MESES_LABEL[i]]); continue; }
     const ing = calcTotalIngresos(m.ingresos, 'proyectado');
     const eg = calcTotalEgresos(m.egresos, 'proyectado');
-    const dm = m.dolarCCL || dolarGlobal;
+    const dm = (await getDolarCCL(mesKey(MESES[i], año))) || dolarGlobal;
     const ah = ing - eg;
     totalIng += ing; totalAh += ah;
     dashRows.push([MESES_LABEL[i], dm, ing, calcIngresosUSD(ing, dm), ah, calcIngresosUSD(ah, dm)]);

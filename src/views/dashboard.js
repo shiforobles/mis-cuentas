@@ -13,6 +13,7 @@ import { navigate } from '../router.js';
 
 // Shared state across tabs
 export let allMonths = [];
+export let dolarPorMes = []; // Dólar resuelto de CADA mes (índice 0-11) vía getDolarCCL
 export let configData = null;
 export let portfolioData = null;
 export let dolarCCL = 0; // Dólar "actual" (global, para el widget)
@@ -33,6 +34,11 @@ export async function renderDashboard(tabParam) {
   for (const mes of MESES) {
     allMonths.push(await dbGet('months', mesKey(mes, año)));
   }
+
+  // Dólar resuelto por mes con toda la cadena (manual → mes → histórico →
+  // anterior). Los tabs deben usar esto, nunca month.dolarCCL crudo, para que
+  // los meses sin valor propio en este dispositivo no caigan al dólar de hoy.
+  dolarPorMes = await Promise.all(MESES.map(mes => getDolarCCL(mesKey(mes, año))));
 
   activeTab = tabParam || 'ingresos';
 

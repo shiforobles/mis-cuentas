@@ -366,18 +366,23 @@ export function calcRebalanceo(totals, targets, dolarCCL) {
  * Calcula el total anual de ingresos y promedio mensual.
  * @param {Array} meses - Array de 12 objetos de datos mensuales
  * @param {'proyectado'|'real'} modo
+ * @param {number} dolarCCLActual
+ * @param {number[]} [dolaresPorMes] - dólar resuelto de cada mes (mismo índice
+ *   que meses); tiene prioridad sobre el campo crudo mes.dolarCCL.
  * @returns {{ totalARS: number, totalUSD: number, promedioARS: number, promedioUSD: number, mesesConDatos: number }}
  */
-export function calcTotalAnual(meses, modo = 'proyectado', dolarCCLActual) {
+export function calcTotalAnual(meses, modo = 'proyectado', dolarCCLActual, dolaresPorMes = null) {
   let totalARS = 0;
   let totalUSD = 0;
   let mesesConDatos = 0;
-  
-  for (const mes of meses) {
+
+  for (let i = 0; i < meses.length; i++) {
+    const mes = meses[i];
+    if (!mes) continue;
     const ingreso = calcTotalIngresos(mes.ingresos, modo);
     if (ingreso > 0) {
       totalARS += ingreso;
-      const dolar = mes.dolarCCL || dolarCCLActual || 1;
+      const dolar = dolaresPorMes?.[i] || mes.dolarCCL || dolarCCLActual || 1;
       totalUSD += safeDivide(ingreso, dolar);
       mesesConDatos++;
     }
@@ -439,19 +444,21 @@ export function calcTopGastos(egresos, n = 5, categorias = []) {
  * @param {Array} meses - Array de 12 objetos de datos mensuales
  * @param {'proyectado'|'real'} modo
  * @param {number} dolarCCLActual
+ * @param {number[]} [dolaresPorMes] - dólar resuelto de cada mes (mismo índice
+ *   que meses); tiene prioridad sobre el campo crudo m.dolarCCL.
  * @returns {Array<{ mes: string, ahorroMes: number, acumulado: number, acumuladoUSD: number }>}
  */
-export function calcAhorroAcumulado(meses, modo = 'real', dolarCCLActual = 1) {
+export function calcAhorroAcumulado(meses, modo = 'real', dolarCCLActual = 1, dolaresPorMes = null) {
   let acumulado = 0;
   const result = [];
   for (let i = 0; i < meses.length; i++) {
     const m = meses[i];
-    if (!m) { result.push({ ahorroMes: 0, acumulado, acumuladoUSD: safeDivide(acumulado, dolarCCLActual) }); continue; }
+    const dolarMes = dolaresPorMes?.[i] || m?.dolarCCL || dolarCCLActual;
+    if (!m) { result.push({ ahorroMes: 0, acumulado, acumuladoUSD: safeDivide(acumulado, dolarMes) }); continue; }
     const ingresos = calcTotalIngresos(m.ingresos, modo);
     const egresos = calcTotalEgresos(m.egresos, modo);
     const ahorroMes = ingresos - egresos;
     acumulado += ahorroMes;
-    const dolarMes = m.dolarCCL || dolarCCLActual;
     result.push({ ahorroMes, acumulado, acumuladoUSD: safeDivide(acumulado, dolarMes) });
   }
   return result;

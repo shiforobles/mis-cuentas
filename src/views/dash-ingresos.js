@@ -2,7 +2,7 @@
  * Dashboard Tab 1 — INGRESOS
  * Tabla mensual, gráfico barras ingresos, línea dólar, línea ahorros.
  */
-import { allMonths, configData, dolarCCL, chartInstances, getChartDefaults, renderDollarWidget } from './dashboard.js';
+import { allMonths, dolarPorMes, configData, dolarCCL, chartInstances, getChartDefaults, renderDollarWidget } from './dashboard.js';
 import { calcTotalIngresos, calcTotalEgresos, calcIngresosUSD, calcTotalAnual } from '../services/calculations.js';
 import { formatARS, formatUSD, formatDolar } from '../utils/format.js';
 import { MESES_SHORT, mesesTranscurridos } from '../utils/constants.js';
@@ -15,7 +15,7 @@ export function renderTabIngresos(panel) {
   const mesesVisibles = allMonths.slice(0, nMeses);
   const labelsVisibles = MESES_SHORT.slice(0, nMeses);
 
-  const anual = calcTotalAnual(mesesVisibles, 'proyectado', dolarCCL);
+  const anual = calcTotalAnual(mesesVisibles, 'proyectado', dolarCCL, dolarPorMes);
 
   panel.innerHTML = `
     <div id="dollar-widget" class="section"></div>
@@ -32,7 +32,7 @@ export function renderTabIngresos(panel) {
               if (!m || i >= nMeses) return '';
               const ing = calcTotalIngresos(m.ingresos, 'proyectado');
               const eg = calcTotalEgresos(m.egresos, 'proyectado');
-              const dm = m.dolarCCL || dolarCCL;
+              const dm = dolarPorMes[i] || dolarCCL;
               const ingUSD = calcIngresosUSD(ing, dm);
               const ahorro = ing - eg;
               const ahUSD = calcIngresosUSD(ahorro, dm);
@@ -99,7 +99,7 @@ export function renderTabIngresos(panel) {
     if (ctx2) {
       chartInstances.dolar = new Chart(ctx2, {
         type: 'line',
-        data: { labels: labelsVisibles, datasets: [{ label: 'Dólar CCL', data: mesesVisibles.map(m => m?.dolarCCL || dolarCCL), borderColor: colors[1], backgroundColor: 'rgba(34,211,238,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
+        data: { labels: labelsVisibles, datasets: [{ label: 'Dólar CCL', data: mesesVisibles.map((m, i) => dolarPorMes[i] || dolarCCL), borderColor: colors[1], backgroundColor: 'rgba(34,211,238,0.1)', fill: true, tension: 0.3, pointRadius: 4 }] },
         options: { ...options, scales: { x: { ticks: { color: fontColor }, grid: { color: gridColor } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } }
       });
     }

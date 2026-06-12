@@ -3,7 +3,7 @@
  * Evolución patrimonial, ahorro acumulado, proyección de fin de año,
  * y evolución de cartera (F4).
  */
-import { allMonths, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
+import { allMonths, dolarPorMes, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
 import { calcAhorroAcumulado, calcProyeccionAnual } from '../services/calculations.js';
 import { getPortfolioHistoryByYear, calcPortfolioEvolution, deletePortfolioSnapshot } from '../services/portfolio-history.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
@@ -11,7 +11,7 @@ import { MESES_SHORT } from '../utils/constants.js';
 import { showToast } from '../utils/helpers.js';
 
 export async function renderTabPatrimonio(panel) {
-  const ahorro = calcAhorroAcumulado(allMonths, 'real', dolarCCL);
+  const ahorro = calcAhorroAcumulado(allMonths, 'real', dolarCCL, dolarPorMes);
   const proy = calcProyeccionAnual(allMonths, 'real', dolarCCL);
   const acumuladoActual = ahorro.length > 0 ? ahorro[ahorro.length - 1].acumulado : 0;
   const acumuladoUSD = ahorro.length > 0 ? ahorro[ahorro.length - 1].acumuladoUSD : 0;
