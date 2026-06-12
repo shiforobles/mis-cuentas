@@ -385,6 +385,13 @@ export async function importAllData(data) {
 
   let imported = 0, skipped = 0;
   const skippedDetail = [];
+  const importedRefs = []; // para encolar al outbox después del tx
+
+  // Una restauración de backup debe GANAR el last-write-wins contra los datos
+  // existentes en otros dispositivos: re-estampamos updatedAt = ahora en todo
+  // lo importado (los timestamps viejos del backup perderían contra cualquier
+  // edición posterior, aunque sea de datos que justamente se quieren pisar).
+  const now = new Date().toISOString();
 
   // Importar datos (validando cada registro)
   for (const name of storeNames) {
@@ -397,12 +404,22 @@ export async function importAllData(data) {
         console.error(`[import] Registro descartado (${name}:${item?.id}): ${v.reason}`, item);
         continue;
       }
+      if (item && typeof item === 'object') item.updatedAt = now;
       await tx.objectStore(name).put(item);
+      if (item?.id != null) importedRefs.push({ store: name, id: item.id });
       imported++;
     }
   }
 
   await tx.done;
+
+  // Encolar todo lo importado al outbox: el put directo del tx no pasa por
+  // dbPut, así que sin esto el push nunca subiría la restauración y los otros
+  // dispositivos jamás la recibirían.
+  const dbHandle = await getDB();
+  for (const ref of importedRefs) {
+    await enqueueOutbox(dbHandle, ref.store, ref.id, 'put', now);
+  }
 
   if (skipped > 0) {
     console.warn(`[import] ${skipped} registro(s) con forma inválida fueron descartados.`, skippedDetail);
