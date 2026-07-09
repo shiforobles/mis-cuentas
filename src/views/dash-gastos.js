@@ -88,7 +88,7 @@ export function renderTabGastos(panel) {
       Chart.register(...registerables);
       const { colors, options } = getChartDefaults();
       const labels = [], vals = [];
-      CATEGORIAS_EGRESO.forEach(cat => {
+      CATEGORIAS_EGRESO.filter(cat => !cat.esTransferencia).forEach(cat => {
         const sub = calcSubtotalCategoria(m.egresos[cat.id], 'real');
         if (sub > 0) { labels.push(cat.icon + ' ' + cat.nombre); vals.push(sub); }
       });
@@ -122,7 +122,7 @@ export function renderTabGastos(panel) {
     const { fontColor, gridColor, colors, options } = getChartDefaults();
     const tendencia = calcTendenciaGastos(allMonths, 'real');
     const datasets = [];
-    CATEGORIAS_EGRESO.forEach((cat, i) => {
+    CATEGORIAS_EGRESO.filter(cat => !cat.esTransferencia).forEach((cat, i) => {
       const data = tendencia[cat.id];
       if (data && data.some(v => v > 0)) {
         datasets.push({ label: cat.nombre, data, borderColor: colors[i % colors.length], backgroundColor: 'transparent', tension: 0.3, pointRadius: 3, borderWidth: 2 });

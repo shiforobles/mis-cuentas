@@ -345,6 +345,16 @@
   transition: all var(--transition-base);
 }
 
+/* Movimiento de capital (ej: Inversión): mismo componente, acento distinto */
+.expenses-section--capital .collapsible {
+  border-color: var(--color-capital-text);
+}
+
+.expenses-section--capital .collapsible__category-num {
+  background: var(--color-capital-subtle);
+  color: var(--color-capital-text);
+}
+
 .collapsible__header {
   display: flex;
   align-items: center;
@@ -551,7 +561,7 @@
   border-radius: var(--radius-lg);
   padding: var(--space-5);
   display: grid;
-  grid-template-columns: 1fr 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
   gap: var(--space-4);
 }
 

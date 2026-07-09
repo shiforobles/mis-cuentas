@@ -8,7 +8,8 @@ import { dbGet, dbPut, dbGetAll, dbDelete } from '../db/database.js';
 import { getDolarCCL, setDolarManualForMonth, getMonthDolarInfo } from '../services/dollar.js';
 import {
   calcTotalIngresos, calcTotalEgresos, calcSubtotalCategoria,
-  calcRestante, calcIngresosUSD, calcDistribucionIdeal, calcTotalHoras
+  calcRestante, calcIngresosUSD, calcDistribucionIdeal, calcTotalHoras,
+  calcTotalMovimientosCapital
 } from '../services/calculations.js';
 import { getTransactionsForItem, deleteTransaction } from '../services/transactions.js';
 import { formatARS, formatUSD, formatPercent, formatHours, parseNumber, parseHours } from '../utils/format.js';
@@ -277,6 +278,7 @@ function renderResult() {
   
   const totalIngresos = calcTotalIngresos(monthData.ingresos, viewMode);
   const totalEgresos = calcTotalEgresos(monthData.egresos, viewMode);
+  const totalInversion = calcTotalMovimientosCapital(monthData.egresos, viewMode);
   const restante = calcRestante(totalIngresos, totalEgresos, dolarCCL);
   const isPositive = restante.ars >= 0;
   const formatDolarLocal = (v) => `$${Number(v||0).toLocaleString('es-AR', {minimumFractionDigits:2})}`;
@@ -312,11 +314,17 @@ function renderResult() {
         <div class="result-card__value text-danger">${formatARS(totalEgresos)}</div>
       </div>
       <div class="result-card__item">
+        <div class="result-card__label">💰 Inversión</div>
+        <div class="result-card__value" style="color:var(--color-capital-text)">${formatARS(totalInversion)}</div>
+        <div class="result-card__sub">${formatUSD(calcIngresosUSD(totalInversion, dolarCCL))}</div>
+      </div>
+      <div class="result-card__item">
         <div class="result-card__label">Restante</div>
         <div class="result-card__value ${isPositive ? 'result-card__value--positive' : 'result-card__value--negative'}">
           ${formatARS(restante.ars)}
         </div>
         <div class="result-card__sub">${formatUSD(restante.usd)}</div>
+        ${totalInversion > 0 ? `<div class="result-card__sub" style="opacity:.75">líquido ${formatARS(restante.ars - totalInversion)} + inversión ${formatARS(totalInversion)}</div>` : ''}
       </div>
     </div>
   `;
@@ -505,9 +513,12 @@ function buildIncomeRowDOM(item) {
 function renderEgresos() {
   const container = $('#section-egresos');
   if (!container) return;
-  
+
   const totalEgresos = calcTotalEgresos(monthData.egresos, viewMode);
-  
+  const totalInversion = calcTotalMovimientosCapital(monthData.egresos, viewMode);
+  const categoriasGasto = CATEGORIAS_EGRESO.filter(c => !c.esTransferencia);
+  const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.esTransferencia);
+
   container.innerHTML = `
     <div class="section__header">
       <h2 class="section__title">
@@ -516,14 +527,32 @@ function renderEgresos() {
       <span class="badge badge--danger">${formatARS(totalEgresos)}</span>
     </div>
     <div class="expenses-section" id="expenses-container"></div>
+    ${categoriasCapital.length ? `
+      <div class="section__header" style="margin-top:var(--space-5)">
+        <h2 class="section__title">
+          <span>💰</span> Inversión / Movimiento de Capital
+        </h2>
+        <span class="badge" id="badge-inversion" style="background:var(--color-capital-subtle);color:var(--color-capital-text)">${formatARS(totalInversion)}</span>
+      </div>
+      <div class="expenses-section expenses-section--capital" id="expenses-capital-container"></div>
+    ` : ''}
   `;
-  
+
   const expContainer = $('#expenses-container');
-  
-  // Renderizar cada categoría como sección colapsable
-  for (const cat of CATEGORIAS_EGRESO) {
+
+  // Renderizar cada categoría de gasto como sección colapsable
+  for (const cat of categoriasGasto) {
     const catData = monthData.egresos[cat.id] || { items: [] };
     expContainer.appendChild(buildCategorySection(cat, catData));
+  }
+
+  // Categorías de movimiento de capital: aparte, no cuentan como gasto
+  const capitalContainer = $('#expenses-capital-container');
+  if (capitalContainer) {
+    for (const cat of categoriasCapital) {
+      const catData = monthData.egresos[cat.id] || { items: [] };
+      capitalContainer.appendChild(buildCategorySection(cat, catData));
+    }
   }
 }
 
@@ -892,6 +921,10 @@ function updateEgresosTotal() {
   const badge = document.querySelector('#section-egresos .badge');
   if (badge) {
     badge.textContent = formatARS(totalEgresos);
+  }
+  const badgeInversion = document.getElementById('badge-inversion');
+  if (badgeInversion) {
+    badgeInversion.textContent = formatARS(calcTotalMovimientosCapital(monthData.egresos, viewMode));
   }
 }
 

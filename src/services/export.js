@@ -5,7 +5,7 @@
 
 import { dbGetAll, dbGet } from '../db/database.js';
 import { getDolarCCL, getDolarActual } from './dollar.js';
-import { calcTotalIngresos, calcTotalEgresos, calcIngresosUSD, calcSubtotalCategoria } from './calculations.js';
+import { calcTotalIngresos, calcTotalEgresos, calcIngresosUSD, calcSubtotalCategoria, calcTotalMovimientosCapital } from './calculations.js';
 import { MESES, MESES_LABEL, CATEGORIAS_EGRESO, mesKey } from '../utils/constants.js';
 
 // ─── EXPORT EXCEL ────────────────────────────────────────
@@ -86,6 +86,10 @@ export async function exportToExcel() {
     const totalEgR = calcTotalEgresos(m.egresos, 'real');
     rows.push([], ['', '', 'TOTAL EGRESOS', '', totalEgP, totalEgR]);
 
+    const totalInvP = calcTotalMovimientosCapital(m.egresos, 'proyectado');
+    const totalInvR = calcTotalMovimientosCapital(m.egresos, 'real');
+    rows.push([], ['', '', 'TOTAL INVERSIÓN / MOVIMIENTO DE CAPITAL', '', totalInvP, totalInvR]);
+
     rows.push([], [], ['INGRESOS'], ['', '', '', '', '', '', '', '', 'Descripción', 'Proyectado', 'Real', 'Hs Sem.', 'Hs Mens.']);
     if (m.ingresos) {
       m.ingresos.forEach(item => {
@@ -122,6 +126,8 @@ export async function exportToPDF(mesId) {
   const totalIngR = calcTotalIngresos(m.ingresos, 'real');
   const totalEgP = calcTotalEgresos(m.egresos, 'proyectado');
   const totalEgR = calcTotalEgresos(m.egresos, 'real');
+  const totalInvP = calcTotalMovimientosCapital(m.egresos, 'proyectado');
+  const totalInvR = calcTotalMovimientosCapital(m.egresos, 'real');
 
   let html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Mis Cuentas - ${mesLabel} ${año}</title>
   <style>body{font-family:Arial,sans-serif;font-size:11px;color:#222;margin:20px}
@@ -158,6 +164,7 @@ export async function exportToPDF(mesId) {
   html += `<h2>RESULTADO</h2><table>
     <tr><td>Ingresos</td><td class="r">$${totalIngP.toLocaleString('es-AR')}</td><td class="r">$${totalIngR.toLocaleString('es-AR')}</td></tr>
     <tr><td>Egresos</td><td class="r">$${totalEgP.toLocaleString('es-AR')}</td><td class="r">$${totalEgR.toLocaleString('es-AR')}</td></tr>
+    <tr><td>💰 Inversión / Movimiento de Capital</td><td class="r">$${totalInvP.toLocaleString('es-AR')}</td><td class="r">$${totalInvR.toLocaleString('es-AR')}</td></tr>
     <tr class="total"><td>Restante</td><td class="r ${restP>=0?'pos':'neg'}">$${restP.toLocaleString('es-AR')}</td><td class="r ${restR>=0?'pos':'neg'}">$${restR.toLocaleString('es-AR')}</td></tr>
   </table>`;
 

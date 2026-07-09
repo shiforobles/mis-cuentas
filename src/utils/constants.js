@@ -96,6 +96,9 @@ export const CATEGORIAS_EGRESO = [
     id: 8,
     nombre: 'Inversión',
     icon: '📈',
+    // Movimiento de capital: no es un gasto, se excluye de egresos/ahorro
+    // y se muestra aparte (ver CATEGORIAS_TRANSFERENCIA_IDS).
+    esTransferencia: true,
     items: [
       { descripcion: 'Dólar MEP', proyectado: 0 },
       { descripcion: 'Criptomonedas', proyectado: 0 },
@@ -122,6 +125,11 @@ export const CATEGORIAS_EGRESO = [
     ]
   }
 ];
+
+/** IDs de categorías marcadas como movimiento de capital (no son gasto). */
+export const CATEGORIAS_TRANSFERENCIA_IDS = CATEGORIAS_EGRESO
+  .filter(c => c.esTransferencia)
+  .map(c => c.id);
 
 /**
  * Distribución ideal (% objetivo por categoría).

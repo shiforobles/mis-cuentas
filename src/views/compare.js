@@ -4,7 +4,7 @@
  */
 
 import { dbGet } from '../db/database.js';
-import { calcTotalIngresos, calcTotalEgresos, calcSubtotalCategoria } from '../services/calculations.js';
+import { calcTotalIngresos, calcTotalEgresos, calcSubtotalCategoria, calcTotalMovimientosCapital } from '../services/calculations.js';
 import { formatARS, formatPercent } from '../utils/format.js';
 import { MESES, MESES_LABEL, MESES_SHORT, CATEGORIAS_EGRESO, mesKey } from '../utils/constants.js';
 import { $ } from '../utils/helpers.js';
@@ -64,8 +64,12 @@ export async function renderCompare(paramStr) {
     const ingB = calcTotalIngresos(monthB.ingresos, 'real');
     const egA = calcTotalEgresos(monthA.egresos, 'real');
     const egB = calcTotalEgresos(monthB.egresos, 'real');
+    const invA = calcTotalMovimientosCapital(monthA.egresos, 'real');
+    const invB = calcTotalMovimientosCapital(monthB.egresos, 'real');
     const restA = ingA - egA;
     const restB = ingB - egB;
+    const categoriasGasto = CATEGORIAS_EGRESO.filter(c => !c.esTransferencia);
+    const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.esTransferencia);
 
     const arrow = (delta) => delta > 0 ? '▲' : delta < 0 ? '▼' : '—';
     const deltaColor = (delta, inverted = false) => {
@@ -76,6 +80,7 @@ export async function renderCompare(paramStr) {
 
     const dIng = ingB - ingA;
     const dEg = egB - egA;
+    const dInv = invB - invA;
     const dRest = restB - restA;
 
     container.innerHTML = `
@@ -97,6 +102,15 @@ export async function renderCompare(paramStr) {
             <span class="text-danger">${formatARS(egB)}</span>
           </div>
           <div class="compare-card__delta" style="color:${deltaColor(dEg, true)}">${arrow(dEg)} ${formatARS(Math.abs(dEg))}</div>
+        </div>
+        <div class="compare-card">
+          <div class="compare-card__label">💰 Inversión</div>
+          <div class="compare-card__values">
+            <span style="color:var(--color-capital-text)">${formatARS(invA)}</span>
+            <span class="compare-card__arrow" style="color:${deltaColor(dInv)}">${arrow(dInv)}</span>
+            <span style="color:var(--color-capital-text)">${formatARS(invB)}</span>
+          </div>
+          <div class="compare-card__delta" style="color:${deltaColor(dInv)}">${arrow(dInv)} ${formatARS(Math.abs(dInv))}</div>
         </div>
         <div class="compare-card">
           <div class="compare-card__label">Restante</div>
@@ -121,7 +135,7 @@ export async function renderCompare(paramStr) {
               <th>Tendencia</th>
             </tr></thead>
             <tbody>
-              ${CATEGORIAS_EGRESO.map(cat => {
+              ${categoriasGasto.map(cat => {
                 const valA = calcSubtotalCategoria(monthA.egresos[cat.id], 'real');
                 const valB = calcSubtotalCategoria(monthB.egresos[cat.id], 'real');
                 const delta = valB - valA;
@@ -148,6 +162,47 @@ export async function renderCompare(paramStr) {
         </div>
       </div>
 
+      ${categoriasCapital.length ? `
+      <div class="card section">
+        <h3 class="card__title"><span class="card__title-icon">💰</span> Inversión / Movimiento de Capital</h3>
+        <div class="annual-table-wrap">
+          <table class="data-table">
+            <thead><tr>
+              <th>Categoría</th>
+              <th class="text-right">${MESES_SHORT[a]}</th>
+              <th class="text-right">${MESES_SHORT[b]}</th>
+              <th class="text-right">Δ</th>
+              <th>Tendencia</th>
+            </tr></thead>
+            <tbody>
+              ${categoriasCapital.map(cat => {
+                const valA = calcSubtotalCategoria(monthA.egresos[cat.id], 'real');
+                const valB = calcSubtotalCategoria(monthB.egresos[cat.id], 'real');
+                const delta = valB - valA;
+                const maxVal = Math.max(valA, valB, 1);
+                const pctA = (valA / maxVal) * 100;
+                const pctB = (valB / maxVal) * 100;
+                return `<tr>
+                  <td style="font-weight:500">${cat.icon} ${cat.nombre}</td>
+                  <td class="text-right">${formatARS(valA)}</td>
+                  <td class="text-right">${formatARS(valB)}</td>
+                  <td class="text-right" style="color:${deltaColor(delta)};font-weight:600">${arrow(delta)} ${formatARS(Math.abs(delta))}</td>
+                  <td><div class="compare-bar"><div class="compare-bar__a" style="width:${pctA}%"></div><div class="compare-bar__b" style="width:${pctB}%"></div></div></td>
+                </tr>`;
+              }).join('')}
+              <tr class="data-table--total">
+                <td><strong>TOTAL</strong></td>
+                <td class="text-right"><strong>${formatARS(invA)}</strong></td>
+                <td class="text-right"><strong>${formatARS(invB)}</strong></td>
+                <td class="text-right" style="color:${deltaColor(dInv)};font-weight:700">${arrow(dInv)} ${formatARS(Math.abs(dInv))}</td>
+                <td></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      ` : ''}
+
       <div class="card section">
         <h3 class="card__title"><span class="card__title-icon">📊</span> Comparación Visual</h3>
         <div class="chart-container" style="height:300px"><canvas id="chart-compare"></canvas></div>
@@ -173,9 +228,9 @@ export async function renderCompare(paramStr) {
       Chart.register(...registerables);
       const fontColor = getComputedStyle(document.documentElement).getPropertyValue('--color-text-secondary').trim() || '#94a3b8';
       const gridColor = getComputedStyle(document.documentElement).getPropertyValue('--color-border').trim() || '#2d3a4f';
-      const labels = CATEGORIAS_EGRESO.map(c => c.nombre);
-      const dataA = CATEGORIAS_EGRESO.map(c => calcSubtotalCategoria(monthA.egresos[c.id], 'real'));
-      const dataB = CATEGORIAS_EGRESO.map(c => calcSubtotalCategoria(monthB.egresos[c.id], 'real'));
+      const labels = categoriasGasto.map(c => c.nombre);
+      const dataA = categoriasGasto.map(c => calcSubtotalCategoria(monthA.egresos[c.id], 'real'));
+      const dataB = categoriasGasto.map(c => calcSubtotalCategoria(monthB.egresos[c.id], 'real'));
       const ctx = document.getElementById('chart-compare')?.getContext('2d');
       if (ctx) {
         new Chart(ctx, {

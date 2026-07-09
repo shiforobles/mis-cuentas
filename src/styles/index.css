@@ -45,7 +45,12 @@
   --color-info: #22d3ee;
   --color-info-subtle: rgba(34, 211, 238, 0.12);
   --color-info-text: #67e8f9;
-  
+
+  /* Movimiento de capital (ej: Inversión) — ni gasto ni ingreso */
+  --color-capital: #a78bfa;
+  --color-capital-subtle: rgba(167, 139, 250, 0.12);
+  --color-capital-text: #c4b5fd;
+
   /* Gradientes */
   --gradient-primary: linear-gradient(135deg, #6366f1, #8b5cf6);
   --gradient-success: linear-gradient(135deg, #22c55e, #16a34a);
@@ -132,7 +137,10 @@
   
   --color-info-subtle: rgba(34, 211, 238, 0.08);
   --color-info-text: #0891b2;
-  
+
+  --color-capital-subtle: rgba(124, 58, 237, 0.08);
+  --color-capital-text: #7c3aed;
+
   --gradient-card: linear-gradient(135deg, rgba(99, 102, 241, 0.03), rgba(34, 211, 238, 0.03));
   --gradient-glass: linear-gradient(135deg, rgba(0,0,0,0.01), rgba(0,0,0,0.02));
   

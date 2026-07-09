@@ -5,6 +5,12 @@
  */
 
 import { parseHours } from '../utils/format.js';
+import { CATEGORIAS_EGRESO } from '../utils/constants.js';
+
+/** IDs de categorías que son movimiento de capital, no gasto (ver constants.js). */
+const TRANSFERENCIA_IDS = new Set(
+  CATEGORIAS_EGRESO.filter(c => c.esTransferencia).map(c => c.id)
+);
 
 /**
  * División segura: si el divisor es 0 o inválido, devuelve 0.
@@ -44,6 +50,8 @@ export function calcTotalIngresos(ingresos, modo = 'proyectado') {
 // ─── 3. TOTAL EGRESOS ───────────────────────────────────
 /**
  * Calcula el total de egresos de todas las categorías.
+ * Excluye las categorías marcadas como movimiento de capital (ej: Inversión):
+ * no son gasto, solo cambian la plata de forma (ver calcTotalMovimientosCapital).
  * @param {Object} egresos - { catId: { items: [...] } }
  * @param {'proyectado'|'real'} modo
  * @returns {number}
@@ -52,6 +60,25 @@ export function calcTotalEgresos(egresos, modo = 'proyectado') {
   if (!egresos) return 0;
   let total = 0;
   for (const catId of Object.keys(egresos)) {
+    if (TRANSFERENCIA_IDS.has(Number(catId))) continue;
+    total += calcSubtotalCategoria(egresos[catId], modo);
+  }
+  return total;
+}
+
+/**
+ * Calcula el total de movimientos de capital del mes (ej: Inversión).
+ * Es la contraparte de calcTotalEgresos: suma SOLO las categorías marcadas
+ * como transferencia, para mostrarlas aparte sin que se pierdan.
+ * @param {Object} egresos - { catId: { items: [...] } }
+ * @param {'proyectado'|'real'} modo
+ * @returns {number}
+ */
+export function calcTotalMovimientosCapital(egresos, modo = 'proyectado') {
+  if (!egresos) return 0;
+  let total = 0;
+  for (const catId of Object.keys(egresos)) {
+    if (!TRANSFERENCIA_IDS.has(Number(catId))) continue;
     total += calcSubtotalCategoria(egresos[catId], modo);
   }
   return total;
@@ -122,8 +149,10 @@ export function calcSemaforo(percentIdeal, percentReal) {
  */
 export function calcDistribucionIdeal(egresos, distribucionIdeal, modo = 'proyectado') {
   const totalEgresos = calcTotalEgresos(egresos, modo);
-  
-  return Object.entries(distribucionIdeal).map(([catId, config]) => {
+
+  return Object.entries(distribucionIdeal)
+    .filter(([catId]) => !TRANSFERENCIA_IDS.has(Number(catId)))
+    .map(([catId, config]) => {
     const subtotal = calcSubtotalCategoria(egresos[catId], modo);
     const percentReal = calcPorcentajeCategoria(subtotal, totalEgresos);
     const montoIdeal = safeDivide(config.percent * totalEgresos, 100);
@@ -423,6 +452,7 @@ export function calcTopGastos(egresos, n = 5, categorias = []) {
   const allItems = [];
   for (const [catId, cat] of Object.entries(egresos)) {
     if (!cat?.items) continue;
+    if (TRANSFERENCIA_IDS.has(Number(catId))) continue;
     const catInfo = categorias.find(c => c.id === Number(catId));
     for (const item of cat.items) {
       if ((item.real || 0) > 0) {
@@ -508,6 +538,7 @@ export function calcTendenciaGastos(todosMeses, modo = 'real') {
     const m = todosMeses[i];
     if (!m?.egresos) continue;
     for (const [catId, cat] of Object.entries(m.egresos)) {
+      if (TRANSFERENCIA_IDS.has(Number(catId))) continue;
       if (!result[catId]) result[catId] = new Array(12).fill(0);
       result[catId][i] = calcSubtotalCategoria(cat, modo);
     }
