@@ -39,7 +39,17 @@ async function init() {
     
     // 3. Inicializar base de datos con datos por defecto
     await seedDatabase();
-    
+
+    // 3b. Reparar integridad: los `real` se recalculan desde las transacciones
+    //     (fuente de verdad). Corrige meses pisados por conflictos de sync y
+    //     re-adopta transacciones huérfanas. Idempotente y barato.
+    try {
+      const { repairRealsFromTransactions } = await import('./services/repair.js');
+      await repairRealsFromTransactions();
+    } catch (e) {
+      console.warn('Reparación de datos no ejecutada:', e.message);
+    }
+
     // 4. Renderizar shell (header + nav)
     renderHeader();
     renderNav();

@@ -221,6 +221,20 @@ export async function pullChanges({ remoteWins = false } = {}) {
 export async function syncNow() {
   const push = await pushChanges();
   const pull = await pullChanges();
+
+  // Si el pull trajo cambios, recalcular los `real` desde las transacciones:
+  // un mes bajado de otro dispositivo puede traer reales viejos (el conflicto
+  // se resuelve por registro entero). La reparación es idempotente: si corrige
+  // algo, encola el mes corregido y el próximo auto-sync lo sube.
+  if ((pull.pulled || 0) > 0 || (pull.deletedLocal || 0) > 0) {
+    try {
+      const { repairRealsFromTransactions } = await import('./repair.js');
+      await repairRealsFromTransactions();
+    } catch (e) {
+      console.warn('[sync] Reparación post-pull no ejecutada:', e?.message);
+    }
+  }
+
   return { ok: push.ok && pull.ok, push, pull };
 }
 
@@ -365,6 +379,14 @@ export async function firstSync(mode) {
   } else {
     result.push = await pushChanges();
     result.pull = await pullChanges();
+  }
+  // Tras el primer merge, los meses pueden haber quedado con reales viejos
+  // (conflicto por registro entero): recalcular desde las transacciones.
+  try {
+    const { repairRealsFromTransactions } = await import('./repair.js');
+    await repairRealsFromTransactions();
+  } catch (e) {
+    console.warn('[sync] Reparación post-merge no ejecutada:', e?.message);
   }
   await markFirstMergeDone();
   await refreshSyncStatus();

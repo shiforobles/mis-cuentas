@@ -155,9 +155,12 @@ async function openCopyMonthModal() {
             <label style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer">
               <input type="radio" name="copy-mode" value="projected"> Estructura + proyectados
             </label>
+            <label style="display:flex;align-items:center;gap:var(--space-2);cursor:pointer">
+              <input type="radio" name="copy-mode" value="reales"> Reales del origen → proyectado de este mes
+            </label>
           </div>
         </div>
-        <div class="form-field__hint">Se agregarán los ítems que no existan. No se sobrescriben ítems existentes.</div>
+        <div class="form-field__hint" id="copy-mode-hint">Se agregarán los ítems que no existan. No se sobrescriben ítems existentes.</div>
       </div>
       <div class="modal__footer">
         <button class="btn btn--secondary" id="btn-cancel-copy">Cancelar</button>
@@ -170,28 +173,52 @@ async function openCopyMonthModal() {
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.remove(); });
   $('#btn-close-copy').addEventListener('click', () => modal.remove());
   $('#btn-cancel-copy').addEventListener('click', () => modal.remove());
-  
+
+  // El hint cambia según el modo: el modo "reales" SÍ pisa proyectados.
+  modal.querySelectorAll('input[name="copy-mode"]').forEach(radio => {
+    radio.addEventListener('change', () => {
+      const hint = $('#copy-mode-hint');
+      if (!hint) return;
+      hint.textContent = radio.value === 'reales'
+        ? 'El proyectado de cada ítem de este mes se reemplaza por el REAL del mes origen (los ítems que falten se agregan). Los reales de este mes no se tocan.'
+        : 'Se agregarán los ítems que no existan. No se sobrescriben ítems existentes.';
+    });
+  });
+
   $('#btn-confirm-copy').addEventListener('click', async () => {
     const sourceMes = $('#copy-source-month').value;
     const mode = document.querySelector('input[name="copy-mode"]:checked').value;
     const sourceKey = mesKey(sourceMes, currentAño);
     const sourceData = await dbGet('months', sourceKey);
-    
+
     if (!sourceData) {
       showToast('No hay datos en el mes origen', 'warning');
       return;
     }
-    
+
     let added = 0;
-    
+    let updated = 0;
+    // Valor proyectado que corresponde copiar según el modo elegido.
+    const proyectadoDe = (srcItem) => {
+      if (mode === 'projected') return srcItem.proyectado || 0;
+      if (mode === 'reales') return srcItem.real || 0;
+      return 0;
+    };
+
     // Copiar ingresos
     for (const srcItem of sourceData.ingresos) {
-      const exists = monthData.ingresos.some(i => i.descripcion.toLowerCase() === srcItem.descripcion.toLowerCase());
-      if (!exists) {
+      const existing = monthData.ingresos.find(i => i.descripcion.toLowerCase() === srcItem.descripcion.toLowerCase());
+      if (existing) {
+        // Modo "reales": actualizar el proyectado del ítem ya existente.
+        if (mode === 'reales' && (srcItem.real || 0) > 0 && existing.proyectado !== srcItem.real) {
+          existing.proyectado = srcItem.real;
+          updated++;
+        }
+      } else {
         monthData.ingresos.push({
           id: generateId(),
           descripcion: srcItem.descripcion,
-          proyectado: mode === 'projected' ? srcItem.proyectado : 0,
+          proyectado: proyectadoDe(srcItem),
           real: 0,
           horasSemanales: srcItem.horasSemanales || '',
           horasMensuales: srcItem.horasMensuales || '',
@@ -200,27 +227,35 @@ async function openCopyMonthModal() {
         added++;
       }
     }
-    
+
     // Copiar egresos
     for (const [catId, catData] of Object.entries(sourceData.egresos)) {
       if (!monthData.egresos[catId]) monthData.egresos[catId] = { items: [] };
       for (const srcItem of (catData.items || [])) {
-        const exists = monthData.egresos[catId].items.some(i => i.descripcion.toLowerCase() === srcItem.descripcion.toLowerCase());
-        if (!exists) {
+        const existing = monthData.egresos[catId].items.find(i => i.descripcion.toLowerCase() === srcItem.descripcion.toLowerCase());
+        if (existing) {
+          if (mode === 'reales' && (srcItem.real || 0) > 0 && existing.proyectado !== srcItem.real) {
+            existing.proyectado = srcItem.real;
+            updated++;
+          }
+        } else {
           monthData.egresos[catId].items.push({
             id: generateId(),
             descripcion: srcItem.descripcion,
-            proyectado: mode === 'projected' ? srcItem.proyectado : 0,
+            proyectado: proyectadoDe(srcItem),
             real: 0,
           });
           added++;
         }
       }
     }
-    
-    await dbPut('months', monthData);
+
+    await saveMonthData();
     modal.remove();
-    showToast(`✓ ${added} ítems copiados desde ${MESES_LABEL[MESES.indexOf(sourceMes)]}`, 'success');
+    const parts = [];
+    if (added) parts.push(`${added} ítem(s) agregados`);
+    if (updated) parts.push(`${updated} proyectado(s) actualizados`);
+    showToast(`✓ ${parts.length ? parts.join(', ') : 'Sin cambios'} desde ${MESES_LABEL[MESES.indexOf(sourceMes)]}`, parts.length ? 'success' : 'info');
     renderMonthlyView(currentMonth); // Re-render
   });
 }
