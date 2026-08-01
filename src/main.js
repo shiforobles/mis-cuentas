@@ -69,6 +69,21 @@ async function init() {
     import('./services/sync.js').then(({ initSync }) => initSync())
       .catch(e => console.warn('Sync no inicializado:', e.message));
 
+    // 8. Snapshot automático de cartera del mes en curso (en background).
+    //    Se actualiza en cada apertura: al cerrar el mes, el snapshot queda
+    //    congelado con el último estado. Así la Evolución de Cartera no
+    //    depende de acordarse de apretar 📸. No guarda si la cartera está en 0.
+    import('./services/portfolio-history.js').then(async ({ snapshotCurrentMonth }) => {
+      const { dbGet } = await import('./db/database.js');
+      const p = await dbGet('portfolio', 'current');
+      const hayMontos = p && ['liquidez', 'inversiones'].some(sec =>
+        Object.values(p[sec] || {}).some(it => (Number(it.monto) || 0) > 0));
+      if (hayMontos) {
+        const snap = await snapshotCurrentMonth();
+        if (snap) console.log(`📸 Snapshot automático de cartera (${snap.mesId}): guardado`);
+      }
+    }).catch(e => console.warn('Snapshot automático no ejecutado:', e.message));
+
     console.log('✓ Mis Cuentas inicializada');
   } catch (error) {
     console.error('Error inicializando la app:', error);

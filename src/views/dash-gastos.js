@@ -40,7 +40,46 @@ export function renderTabGastos(panel) {
     // Alerts
     const alertas = dist.filter(d => d.semaforo === 'danger');
 
+    // Ritmo de gasto: solo para el mes calendario en curso
+    const hoy = new Date();
+    const esMesEnCurso = idx === hoy.getMonth();
+    let ritmoHTML = '';
+    if (esMesEnCurso) {
+      const diaHoy = hoy.getDate();
+      const diasMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate();
+      const diasRestantes = diasMes - diaHoy;
+      const presupuesto = calcTotalEgresos(m.egresos, 'proyectado');
+      const porDia = diaHoy > 0 ? totalEg / diaHoy : 0;
+      const proyeccionFinMes = porDia * diasMes;
+      const restantePresu = presupuesto - totalEg;
+      const disponiblePorDia = diasRestantes > 0 ? restantePresu / diasRestantes : restantePresu;
+      const pasado = presupuesto > 0 && proyeccionFinMes > presupuesto;
+      const pctProyeccion = presupuesto > 0 ? (proyeccionFinMes / presupuesto) * 100 : 0;
+      ritmoHTML = `
+        <div class="card section" ${pasado ? 'style="border-color:var(--color-warning, #d97706)"' : ''}>
+          <h3 class="card__title"><span class="card__title-icon">⏳</span> Ritmo del mes (día ${diaHoy} de ${diasMes})</h3>
+          <div class="dashboard-grid">
+            <div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">GASTÁS POR DÍA</div>
+              <div style="font-size:var(--font-size-xl);font-weight:800">${formatARS(porDia)}</div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">Llevás ${formatARS(totalEg)} de ${formatARS(presupuesto)} presupuestados</div>
+            </div>
+            <div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">A ESTE RITMO TERMINÁS EN</div>
+              <div style="font-size:var(--font-size-xl);font-weight:800;color:${pasado ? 'var(--color-danger-text)' : 'var(--color-success-text)'}">${formatARS(proyeccionFinMes)}</div>
+              <div style="font-size:var(--font-size-xs);color:${pasado ? 'var(--color-danger-text)' : 'var(--color-text-muted)'}">${presupuesto > 0 ? `${formatPercent(pctProyeccion, 0)} del presupuesto${pasado ? ' ⚠️' : ' ✓'}` : 'Sin presupuesto cargado'}</div>
+            </div>
+            <div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">PARA CUMPLIR EL PRESUPUESTO</div>
+              <div style="font-size:var(--font-size-xl);font-weight:800;color:${disponiblePorDia >= 0 ? 'var(--color-text)' : 'var(--color-danger-text)'}">${disponiblePorDia >= 0 ? formatARS(disponiblePorDia) + '/día' : 'Excedido'}</div>
+              <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${disponiblePorDia >= 0 ? `te quedan ${formatARS(restantePresu)} para ${diasRestantes} día${diasRestantes !== 1 ? 's' : ''}` : `ya pasaste el presupuesto por ${formatARS(Math.abs(restantePresu))}`}</div>
+            </div>
+          </div>
+        </div>`;
+    }
+
     container.innerHTML = `
+      ${ritmoHTML}
       ${alertas.length > 0 ? `<div class="card section" style="border-color:var(--color-danger);background:var(--color-danger-subtle)">
         <div style="font-weight:600;color:var(--color-danger-text);margin-bottom:var(--space-2)">⚠️ Categorías excedidas</div>
         ${alertas.map(a => `<div style="font-size:var(--font-size-sm)">• <strong>${a.nombre}</strong>: ${formatPercent(a.percentActual)} (ideal: ${formatPercent(a.percentIdeal)})</div>`).join('')}

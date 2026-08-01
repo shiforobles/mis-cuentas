@@ -111,3 +111,40 @@ export function calcPortfolioEvolution(snapshots) {
     };
   });
 }
+
+/**
+ * Rendimiento REAL de la cartera: separa cuánto del crecimiento fue plata
+ * nueva que aportaste vs cuánto rindió (o perdió) lo invertido.
+ *
+ *   rendimiento del mes = Δ total del mes − aportes del mes
+ *
+ * Los aportes salen de la categoría Inversión (movimiento de capital) del mes.
+ * Se calcula en ARS y en USD (aportes convertidos con el dólar del snapshot).
+ *
+ * @param {Array} evolution - salida de calcPortfolioEvolution
+ * @param {Array} allMonths - documentos de los 12 meses (índice 0-11)
+ * @param {Function} calcAportes - (egresos) => total aportes reales del mes
+ * @returns {Array} evolución con aportesARS, rendimientoARS, rendimientoPct, rendimientoUSD
+ */
+export function calcPortfolioReturns(evolution, allMonths, calcAportes) {
+  return evolution.map((e, i) => {
+    const mesIdx = MESES.indexOf(e.mesId);
+    const month = mesIdx >= 0 ? allMonths[mesIdx] : null;
+    const aportesARS = month ? calcAportes(month.egresos) : 0;
+    const hasPrev = i > 0;
+    const prev = hasPrev ? evolution[i - 1] : null;
+    const rendimientoARS = hasPrev ? e.deltaARS - aportesARS : null;
+    const aportesUSD = e.dolarCCL > 0 ? aportesARS / e.dolarCCL : 0;
+    const rendimientoUSD = hasPrev ? e.deltaUSD - aportesUSD : null;
+    return {
+      ...e,
+      aportesARS,
+      rendimientoARS,
+      rendimientoUSD,
+      // % sobre el capital que había al inicio del mes
+      rendimientoPct: hasPrev && prev.granTotalARS > 0 && rendimientoARS != null
+        ? (rendimientoARS / prev.granTotalARS) * 100
+        : null,
+    };
+  });
+}
