@@ -6,7 +6,7 @@
 import { allMonths, dolarPorMes, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
 import { calcAhorroAcumulado, calcProyeccionAnual, calcTotalMovimientosCapital } from '../services/calculations.js';
 import { getPortfolioHistoryByYear, calcPortfolioEvolution, calcPortfolioReturns, deletePortfolioSnapshot } from '../services/portfolio-history.js';
-import { getInflacionYear, acumularInflacion, acumularDolar } from '../services/inflation.js';
+import { getInflacionYear, getInflacionUSAYear, getRiesgoPais, acumularInflacion, acumularDolar } from '../services/inflation.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
 import { MESES_SHORT, mesesTranscurridos } from '../utils/constants.js';
 import { showToast } from '../utils/helpers.js';
@@ -33,6 +33,16 @@ export async function renderTabPatrimonio(panel) {
   const inflAcumTotal = ultimoConDato >= 0 ? inflAcum[ultimoConDato] : null;
   const dolarAcumMismoMes = ultimoConDato >= 0 ? dolarAcum[ultimoConDato] : null;
   const poderCompra = inflAcumTotal != null ? (1 / (1 + inflAcumTotal / 100) - 1) * 100 : null;
+
+  // Inflación de EE.UU. (poder de compra del dólar) + riesgo país (bonos AR en USD)
+  const inflUSAMensual = await getInflacionUSAYear(año);
+  const inflUSAAcum = acumularInflacion(inflUSAMensual);
+  const ultimoUSA = (() => { let k = -1; inflUSAAcum.forEach((v, i) => { if (v != null) k = i; }); return k; })();
+  const inflUSAAcumTotal = ultimoUSA >= 0 ? inflUSAAcum[ultimoUSA] : null;
+  const poderCompraUSD = inflUSAAcumTotal != null ? (1 / (1 + inflUSAAcumTotal / 100) - 1) * 100 : null;
+  const riesgo = await getRiesgoPais();
+  const riesgoPrevio = riesgo.serie.length >= 2 ? riesgo.serie[riesgo.serie.length - 2] : null;
+  const riesgoDelta = riesgo.actual && riesgoPrevio ? riesgo.actual.valor - riesgoPrevio.valor : null;
 
   panel.innerHTML = `
     <div class="dashboard-grid">
@@ -76,12 +86,32 @@ export async function renderTabPatrimonio(panel) {
               : `El dólar subió menos que la inflación: tus USD perdieron ${formatPercent(inflAcumTotal - dolarAcumMismoMes)} contra los precios`) : ''}</div>
           </div>
         </div>
+        ${inflUSAAcumTotal != null ? `
+        <div class="dashboard-grid" style="margin-bottom:var(--space-3)">
+          <div><div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">INFLACIÓN EE.UU. ACUMULADA (a ${MESES_SHORT[ultimoUSA]})</div>
+            <div style="font-size:var(--font-size-xl);font-weight:800;color:var(--color-warning-text, #d97706)">${formatPercent(inflUSAAcumTotal)}</div>
+            <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">El dólar también pierde: US$100 de enero compran como US$${(100 * (1 + (poderCompraUSD || 0) / 100)).toLocaleString('es-AR', {maximumFractionDigits: 1})}. Tus dólares "quietos" (billete/USDT sin rendimiento) pierden esto por año.</div>
+          </div>
+          ${riesgo.actual ? `
+          <div><div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">RIESGO PAÍS (${riesgo.actual.fecha})</div>
+            <div style="font-size:var(--font-size-xl);font-weight:800;color:var(--color-info-text)">${riesgo.actual.valor} pb ${riesgoDelta != null ? `<span style="font-size:var(--font-size-sm);color:${riesgoDelta <= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${riesgoDelta <= 0 ? '▼' : '▲'} ${Math.abs(riesgoDelta)}</span>` : ''}</div>
+            <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">Sobretasa que pagan los bonos argentinos en USD (AL30/GD30, ONs). Si baja, esos bonos suben de precio; si sube, caen.</div>
+          </div>` : ''}
+        </div>` : ''}
         <div class="chart-container" style="height:280px"><canvas id="chart-inflacion"></canvas></div>
-        <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Fuente: IPC INDEC (ArgentinaDatos). El dato de cada mes se publica a mitad del mes siguiente.</div>
+        <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Fuentes: IPC INDEC y riesgo país (ArgentinaDatos), CPI EE.UU. (StatBureau). El dato de cada mes se publica a mitad del mes siguiente.</div>
       ` : `
         <div class="text-muted" style="font-size:var(--font-size-sm)">Sin datos de inflación todavía (se descargan automáticamente con conexión).</div>
       `}
     </div>
+
+    <!-- Riesgo país: serie de los últimos 24 meses -->
+    ${riesgo.serie.length > 1 ? `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">🇦🇷</span> Riesgo país (últimos ${riesgo.serie.length} meses)</h3>
+      <div class="chart-container" style="height:240px"><canvas id="chart-riesgo"></canvas></div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Referencia rápida: debajo de ~500 pb Argentina puede refinanciar deuda y los bonos en USD valen más; arriba de ~1000 pb es zona de estrés. Es el termómetro de tus CEDEARs/Bonos y ONs en dólares.</div>
+    </div>` : ''}
 
     <!-- F4: Evolución de Cartera + Rendimiento real -->
     <div class="card section">
@@ -98,6 +128,7 @@ export async function renderTabPatrimonio(panel) {
               <th class="text-right" title="Plata nueva que entró a la cartera desde la categoría Inversión">Aportes</th>
               <th class="text-right" title="Δ del mes − aportes: cuánto rindió lo invertido">Rendimiento</th>
               <th class="text-right">Rend. %</th>
+              <th class="text-right" title="Rendimiento medido en dólares (Δ USD − aportes en USD)">Rend. USD</th>
               <th></th>
             </tr></thead>
             <tbody>
@@ -114,6 +145,7 @@ export async function renderTabPatrimonio(panel) {
                   <td class="text-right" style="color:var(--color-capital-text)">${e.aportesARS ? formatARS(e.aportesARS) : '—'}</td>
                   <td class="text-right" style="color:${rColor};font-weight:600">${e.rendimientoARS != null ? formatARS(e.rendimientoARS) : '—'}</td>
                   <td class="text-right" style="color:${rColor}">${e.rendimientoPct != null ? formatPercent(e.rendimientoPct) : '—'}</td>
+                  <td class="text-right" style="color:${e.rendimientoUSD == null ? 'var(--color-text-muted)' : e.rendimientoUSD >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${e.rendimientoUSD != null ? formatUSD(e.rendimientoUSD) : '—'}</td>
                   <td class="text-right"><button class="row-delete btn-del-snap" data-id="${e.id}" data-mes="${mesCap}" title="Borrar snapshot">✕</button></td>
                 </tr>`;
               }).join('')}
@@ -209,6 +241,7 @@ export async function renderTabPatrimonio(panel) {
               { type: 'bar', label: 'Inflación mensual %', data: inflMensual, backgroundColor: colors[4] + '99', borderColor: colors[4], borderWidth: 1, borderRadius: 4, yAxisID: 'y' },
               { type: 'line', label: 'Inflación acumulada %', data: inflAcum, borderColor: colors[3], backgroundColor: colors[3] + '20', fill: true, tension: 0.3, pointRadius: 4, yAxisID: 'y1' },
               { type: 'line', label: 'Dólar CCL acumulado %', data: dolarAcum, borderColor: colors[1], borderDash: [6, 4], tension: 0.3, pointRadius: 3, yAxisID: 'y1' },
+              { type: 'line', label: 'Inflación EE.UU. acumulada %', data: inflUSAAcum, borderColor: colors[2], borderDash: [2, 3], tension: 0.3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y1' },
             ]
           },
           options: { ...options, scales: {
@@ -216,6 +249,21 @@ export async function renderTabPatrimonio(panel) {
             y: { position: 'left', ticks: { color: colors[4] }, grid: { color: gridColor }, title: { display: true, text: '% mensual', color: fontColor, font: { size: 10 } } },
             y1: { position: 'right', ticks: { color: fontColor }, grid: { display: false }, title: { display: true, text: '% acumulado', color: fontColor, font: { size: 10 } } }
           } }
+        });
+      }
+    }
+
+    // Riesgo país: línea de los últimos meses
+    if (riesgo.serie.length > 1) {
+      const ctxR = document.getElementById('chart-riesgo')?.getContext('2d');
+      if (ctxR) {
+        chartInstances.riesgo = new Chart(ctxR, {
+          type: 'line',
+          data: {
+            labels: riesgo.serie.map(d => d.fecha.slice(2, 7)), // 'YY-MM'
+            datasets: [{ label: 'Riesgo país (pb)', data: riesgo.serie.map(d => d.valor), borderColor: colors[7], backgroundColor: colors[7] + '20', fill: true, tension: 0.3, pointRadius: 3 }]
+          },
+          options: { ...options, scales: { x: { ticks: { color: fontColor, font: { size: 9 } }, grid: { display: false } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } }
         });
       }
     }
