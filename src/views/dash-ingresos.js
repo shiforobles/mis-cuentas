@@ -129,15 +129,28 @@ export function renderTabIngresos(panel) {
     const scaleOpts = { x: { ticks: { color: fontColor }, grid: { display: false } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } };
 
     // Bar: Ingresos proyectado vs real (comparación siempre visible)
+    // + línea de ingresos reales en USD (eje derecho, dólar de cada mes):
+    // muestra si un mes "bueno" en pesos fue realmente bueno en moneda dura.
     const ctx1 = document.getElementById('chart-ingresos')?.getContext('2d');
     if (ctx1) {
+      const ingresosUSD = mesesVisibles.map((m, i) => {
+        if (!m) return null;
+        const real = calcTotalIngresos(m.ingresos, 'real');
+        if (!(real > 0)) return null;
+        return calcIngresosUSD(real, dolarPorMes[i] || dolarCCL);
+      });
       chartInstances.ingresos = new Chart(ctx1, {
         type: 'bar',
         data: { labels: labelsVisibles, datasets: [
-          { label: 'Proyectado', data: mesesVisibles.map(m => m ? calcTotalIngresos(m.ingresos, 'proyectado') : 0), backgroundColor: colors[10] + '55', borderColor: colors[10], borderWidth: 1, borderRadius: 6 },
-          { label: 'Real', data: mesesVisibles.map(m => m ? calcTotalIngresos(m.ingresos, 'real') : 0), backgroundColor: colors[0] + '99', borderColor: colors[0], borderWidth: 1, borderRadius: 6 },
+          { label: 'Proyectado', data: mesesVisibles.map(m => m ? calcTotalIngresos(m.ingresos, 'proyectado') : 0), backgroundColor: colors[10] + '55', borderColor: colors[10], borderWidth: 1, borderRadius: 6, yAxisID: 'y' },
+          { label: 'Real', data: mesesVisibles.map(m => m ? calcTotalIngresos(m.ingresos, 'real') : 0), backgroundColor: colors[0] + '99', borderColor: colors[0], borderWidth: 1, borderRadius: 6, yAxisID: 'y' },
+          { type: 'line', label: 'Real en USD', data: ingresosUSD, borderColor: colors[1], backgroundColor: colors[1], borderWidth: 2, tension: 0.3, pointRadius: 4, spanGaps: true, yAxisID: 'y1' },
         ] },
-        options: { ...options, scales: scaleOpts }
+        options: { ...options, scales: {
+          ...scaleOpts,
+          y: { ...scaleOpts.y, position: 'left' },
+          y1: { position: 'right', ticks: { color: colors[1], callback: (v) => 'US$' + Number(v).toLocaleString('es-AR') }, grid: { display: false } }
+        } }
       });
     }
 
