@@ -54,13 +54,21 @@ export async function renderTabPatrimonio(panel) {
   // Tasa en pesos vs inflación (¿la liquidez remunerada empata los precios?)
   const tasa = await getTasaPlazoFijo();
   const inflUltimoMensual = (() => { let v = null; inflMensual.forEach(x => { if (x != null) v = x; }); return v; })();
-  const tasaMensual = tasa?.mejor ? tnaAMensual(tasa.mejor.tna) : null;
-  const tasaVsInflacion = tasaMensual != null && inflUltimoMensual != null ? tasaMensual - inflUltimoMensual : null;
+  const mejorMensual = tasa?.mejor ? tnaAMensual(tasa.mejor.tna) : null;
+  // Tasa propia (la que realmente le pagan al usuario). Si no la cargó, se
+  // evalúa contra la mejor del mercado como referencia.
+  const tnaPropia = Number(configData?.tasaPesosPropia) || null;
+  const propiaMensual = tnaPropia ? tnaAMensual(tnaPropia) : null;
+  const tasaUsada = propiaMensual ?? mejorMensual;
+  const tasaVsInflacion = tasaUsada != null && inflUltimoMensual != null ? tasaUsada - inflUltimoMensual : null;
+  // Cuánto se deja de ganar por no estar en la mejor tasa del mercado
+  const vsMejor = propiaMensual != null && mejorMensual != null ? propiaMensual - mejorMensual : null;
   // Pesos expuestos: liquidez en ARS de la cartera (lo que sufre o gana con la tasa)
   const pesosEnRiesgo = Object.values(portfolioData?.liquidez || {})
     .filter(i => (i.moneda || 'ARS') !== 'USD')
     .reduce((s, i) => s + (Number(i.monto) || 0), 0);
   const impactoMensualPesos = tasaVsInflacion != null ? pesosEnRiesgo * (tasaVsInflacion / 100) : null;
+  const costoNoMoverse = vsMejor != null ? pesosEnRiesgo * (vsMejor / 100) : null;
 
   // Dólar caro o barato (CCL de hoy vs su promedio real de los últimos años)
   const [cclHist, inflARSSerie, inflUSASerie, sp500] = await Promise.all([
@@ -153,23 +161,29 @@ export async function renderTabPatrimonio(panel) {
       <h3 class="card__title"><span class="card__title-icon">🏦</span> Tus pesos vs la inflación</h3>
       <div class="dashboard-grid">
         <div>
-          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">MEJOR TASA DEL MERCADO (PLAZO FIJO)</div>
-          <div style="font-size:var(--font-size-xl);font-weight:800">${formatPercent(tasaMensual, 2)} <span style="font-size:var(--font-size-sm);font-weight:500" class="text-muted">mensual · ${formatPercent(tasa.mejor.tna, 0)} TNA</span></div>
-          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${tasa.mejor.entidad} · promedio del mercado ${formatPercent(tnaAMensual(tasa.promedioTNA), 2)}/mes</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">${propiaMensual != null ? 'LA TASA QUE TE PAGAN' : 'MEJOR TASA DEL MERCADO (PLAZO FIJO)'}</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatPercent(tasaUsada, 2)} <span style="font-size:var(--font-size-sm);font-weight:500" class="text-muted">mensual · ${formatPercent(propiaMensual != null ? tnaPropia : tasa.mejor.tna, 1)} TNA</span></div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${propiaMensual != null
+            ? `Mejor del mercado: ${formatPercent(mejorMensual, 2)}/mes (${tasa.mejor.entidad})`
+            : `${tasa.mejor.entidad} · promedio del mercado ${formatPercent(tnaAMensual(tasa.promedioTNA), 2)}/mes · <em>cargá tu tasa en Configuración</em>`}</div>
         </div>
         <div>
           <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">CONTRA LA INFLACIÓN DEL ÚLTIMO MES (${formatPercent(inflUltimoMensual)})</div>
           <div style="font-size:var(--font-size-xl);font-weight:800;color:${tasaVsInflacion >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${tasaVsInflacion >= 0 ? '+' : ''}${formatPercent(tasaVsInflacion, 2)}</div>
-          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${tasaVsInflacion >= 0 ? 'La tasa le gana a los precios: tus pesos mantienen valor ✓' : 'La tasa pierde contra los precios: tus pesos se licúan'}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${tasaVsInflacion >= 0 ? 'Le gana a los precios: tus pesos mantienen valor ✓' : 'Pierde contra los precios: tus pesos se licúan mes a mes'}</div>
         </div>
         ${pesosEnRiesgo > 0 ? `
         <div>
-          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">IMPACTO EN TUS ${formatARS(pesosEnRiesgo)} EN PESOS</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">IMPACTO REAL EN TUS ${formatARS(pesosEnRiesgo)}</div>
           <div style="font-size:var(--font-size-xl);font-weight:800;color:${(impactoMensualPesos || 0) >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${(impactoMensualPesos || 0) >= 0 ? '+' : ''}${formatARS(impactoMensualPesos)}/mes</div>
-          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${(impactoMensualPesos || 0) >= 0 ? 'ganancia real si están bien remunerados' : 'pérdida de poder de compra si NO están remunerados a esta tasa'}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${(impactoMensualPesos || 0) >= 0 ? 'ganás poder de compra' : 'perdés poder de compra todos los meses'}${impactoMensualPesos != null ? ` · ${formatARS(Math.abs(impactoMensualPesos) * 12)}/año` : ''}</div>
         </div>` : ''}
       </div>
-      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Tasa de referencia del BCRA (mejor plazo fijo minorista). Compará con lo que te paga tu billetera: si te pagan menos, ahí tenés el costo de la comodidad.</div>
+      ${vsMejor != null && vsMejor < -0.05 && pesosEnRiesgo > 0 ? `
+        <div style="margin-top:var(--space-3);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);background:var(--color-warning-bg, rgba(217,119,6,.12));border:1px solid var(--color-warning-text, #d97706);font-size:var(--font-size-xs);color:var(--color-text-secondary)">
+          Estás <strong>${formatPercent(Math.abs(vsMejor), 2)}/mes</strong> por debajo de la mejor tasa disponible. Sobre ${formatARS(pesosEnRiesgo)} eso es <strong>${formatARS(Math.abs(costoNoMoverse))}/mes</strong> (${formatARS(Math.abs(costoNoMoverse) * 12)} al año) que dejás de ganar por la comodidad de tenerlos donde están.
+        </div>` : ''}
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Referencia: mejor plazo fijo minorista publicado por el BCRA. Tu tasa se edita en Configuración → Tus pesos.</div>
     </div>` : ''}
 
     <!-- Dólar caro o barato (CCL ajustado por inflación) -->

@@ -61,7 +61,19 @@ export async function renderSettings() {
           <div class="form-field__hint">Si cargás un valor, se usa ese en vez de la API. Borralo para volver al automático.</div>
         </div>
       </div>
-      
+
+      <!-- Rendimiento de los pesos -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">🏦 Tus pesos</h2>
+        <div class="form-field">
+          <label class="form-field__label" for="config-tasa-pesos">Tasa anual (TNA %) que te paga tu billetera o banco</label>
+          <input class="form-field__input" type="text" id="config-tasa-pesos"
+                 value="${configData?.tasaPesosPropia ?? ''}"
+                 placeholder="Ej: 16,8" />
+          <div class="form-field__hint">La que te pagan por la plata que dejás quieta (Personal Pay, Mercado Pago, plazo fijo…). El dashboard la compara con la inflación y con la mejor tasa del mercado para mostrarte si tus pesos ganan o pierden.</div>
+        </div>
+      </div>
+
       <!-- Distribución Ideal -->
       <div class="settings-group">
         <h2 class="settings-group__title">🎯 Distribución Ideal (%)</h2>
@@ -852,6 +864,26 @@ function setupEventListeners() {
     });
   }
   
+  // Tasa propia de los pesos (la que paga la billetera/banco del usuario)
+  const tasaInput = $('#config-tasa-pesos');
+  if (tasaInput) {
+    tasaInput.addEventListener('change', async () => {
+      const val = tasaInput.value.trim();
+      if (val === '') {
+        delete configData.tasaPesosPropia;
+        await dbPut('config', configData);
+        showToast('Tasa propia borrada', 'info');
+        return;
+      }
+      const num = parseNumber(val);
+      if (num > 0) {
+        configData.tasaPesosPropia = num;
+        await dbPut('config', configData);
+        showToast(`Tu tasa: ${num}% TNA (${(num / 12).toFixed(2)}% mensual)`, 'success');
+      }
+    });
+  }
+
   // Dólar manual
   const dolarInput = $('#config-dolar-manual');
   if (dolarInput) {
