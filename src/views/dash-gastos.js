@@ -33,12 +33,14 @@ export function renderTabGastos(panel) {
     if (!container) return;
     if (!m) { container.innerHTML = '<div class="empty-state"><div class="empty-state__text">Sin datos para este mes</div></div>'; return; }
 
-    const dist = calcDistribucionIdeal(m.egresos, configData?.distribucionIdeal || {}, 'real');
+    const dist = calcDistribucionIdeal(m.egresos, configData?.distribucionIdeal || {}, 'real', m.ingresos);
     const topG = calcTopGastos(m.egresos, 5, CATEGORIAS_EGRESO);
     const totalEg = calcTotalEgresos(m.egresos, 'real');
 
-    // Alerts
-    const alertas = dist.filter(d => d.semaforo === 'danger');
+    // Alerts: gastos pasados de rosca y, aparte, ahorro por debajo del objetivo
+    // (en inversión el semáforo mide quedarse corto, no excederse).
+    const alertas = dist.filter(d => d.semaforo === 'danger' && !d.esInversion);
+    const ahorroBajo = dist.filter(d => d.esInversion && d.semaforo !== 'ok');
 
     // Ritmo de gasto: solo para el mes calendario en curso
     const hoy = new Date();
@@ -84,6 +86,10 @@ export function renderTabGastos(panel) {
         <div style="font-weight:600;color:var(--color-danger-text);margin-bottom:var(--space-2)">⚠️ Categorías excedidas</div>
         ${alertas.map(a => `<div style="font-size:var(--font-size-sm)">• <strong>${a.nombre}</strong>: ${formatPercent(a.percentActual)} (ideal: ${formatPercent(a.percentIdeal)})</div>`).join('')}
       </div>` : ''}
+      ${ahorroBajo.length > 0 ? `<div class="card section" style="border-color:var(--color-warning, #d97706)">
+        <div style="font-weight:600;color:var(--color-warning-text, #d97706);margin-bottom:var(--space-2)">💰 Ahorro por debajo del objetivo</div>
+        ${ahorroBajo.map(a => `<div style="font-size:var(--font-size-sm)">• <strong>${a.nombre}</strong>: ${formatPercent(a.percentActual)} de tus ingresos (objetivo mínimo: ${formatPercent(a.percentIdeal)} = ${formatARS(a.montoIdeal)})</div>`).join('')}
+      </div>` : ''}
 
       <div class="dashboard-grid">
         <div class="section"><div class="card">
@@ -103,15 +109,18 @@ export function renderTabGastos(panel) {
 
       <div class="card section">
         <h3 class="card__title"><span class="card__title-icon">🎯</span> Distribución Ideal vs Real</h3>
+        <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-bottom:var(--space-3)">
+          ${dist[0]?.sobreIngresos ? `Sobre tus ingresos reales del mes (${formatARS(dist[0].base)})` : `Sobre los egresos del mes (${formatARS(dist[0]?.base || 0)}) — sin ingresos cargados`}
+        </div>
         <div class="annual-table-wrap">
           <table class="data-table"><thead><tr>
             <th>Categoría</th><th class="text-right">% Ideal</th><th class="text-right">Monto Real</th><th class="text-right">% Real</th><th>Estado</th>
           </tr></thead><tbody>
             ${dist.map(d => {
               const sColor = d.semaforo === 'ok' ? 'var(--color-success)' : d.semaforo === 'warning' ? 'var(--color-warning)' : 'var(--color-danger)';
-              return `<tr>
-                <td style="font-weight:500">${d.nombre}</td>
-                <td class="text-right text-muted">${formatPercent(d.percentIdeal)}</td>
+              return `<tr${d.esInversion ? ' style="background:var(--color-capital-subtle)"' : ''}>
+                <td style="font-weight:500">${d.esInversion ? '💰 ' : ''}${d.nombre}</td>
+                <td class="text-right text-muted">${formatPercent(d.percentIdeal)}${d.esInversion ? ' mín.' : ''}</td>
                 <td class="text-right">${formatARS(d.montoReal)}</td>
                 <td class="text-right" style="font-weight:600">${formatPercent(d.percentActual)}</td>
                 <td><span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${sColor}"></span></td>

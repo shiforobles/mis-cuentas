@@ -85,8 +85,14 @@ export const CATEGORIAS_EGRESO = [
   },
   {
     id: 7,
-    nombre: 'Deudas',
+    nombre: 'Pago de tarjetas',
     icon: '💳',
+    // Pagar el resumen NO es un gasto nuevo: los consumos ya se registraron en
+    // su rubro (Alimentación, Transporte…) cuando se compraron. El pago cancela
+    // ese pasivo, así que es una transferencia y se muestra aparte para no
+    // contar la misma plata dos veces.
+    esTransferencia: true,
+    tipoTransferencia: 'pago_tarjeta',
     items: [
       { descripcion: 'Cuota Tarjeta BBVA VISA', proyectado: 600000 },
       { descripcion: 'Cuota Tarjeta BBVA Mastercard', proyectado: 0 },
@@ -99,6 +105,7 @@ export const CATEGORIAS_EGRESO = [
     // Movimiento de capital: no es un gasto, se excluye de egresos/ahorro
     // y se muestra aparte (ver CATEGORIAS_TRANSFERENCIA_IDS).
     esTransferencia: true,
+    tipoTransferencia: 'capital',
     items: [
       { descripcion: 'Dólar MEP', proyectado: 0 },
       { descripcion: 'Criptomonedas', proyectado: 0 },
@@ -126,10 +133,41 @@ export const CATEGORIAS_EGRESO = [
   }
 ];
 
-/** IDs de categorías marcadas como movimiento de capital (no son gasto). */
+/** IDs de categorías que NO son gasto (movimiento de capital o pago de tarjeta). */
 export const CATEGORIAS_TRANSFERENCIA_IDS = CATEGORIAS_EGRESO
   .filter(c => c.esTransferencia)
   .map(c => c.id);
+
+/** IDs de categorías de inversión / movimiento de capital. */
+export const CATEGORIAS_CAPITAL_IDS = CATEGORIAS_EGRESO
+  .filter(c => c.tipoTransferencia === 'capital')
+  .map(c => c.id);
+
+/** IDs de categorías de pago de resumen de tarjeta. */
+export const CATEGORIAS_PAGO_TARJETA_IDS = CATEGORIAS_EGRESO
+  .filter(c => c.tipoTransferencia === 'pago_tarjeta')
+  .map(c => c.id);
+
+/**
+ * Medios de pago disponibles al cargar un gasto. Separan el CÓMO se pagó del
+ * QUÉ se compró (la categoría). Los marcados con `esTarjeta` generan un
+ * consumo que se cancela después con el pago del resumen.
+ */
+export const MEDIOS_PAGO = [
+  { id: 'efectivo', label: 'Efectivo', icon: '💵', esTarjeta: false },
+  { id: 'debito', label: 'Débito / Transferencia', icon: '🏦', esTarjeta: false },
+  { id: 'visa', label: 'Tarjeta VISA', icon: '💳', esTarjeta: true },
+  { id: 'mastercard', label: 'Tarjeta Mastercard', icon: '💳', esTarjeta: true },
+  { id: 'otra_tarjeta', label: 'Otra tarjeta', icon: '💳', esTarjeta: true },
+];
+
+/** Medio de pago por defecto cuando la transacción no lo declara (datos viejos). */
+export const MEDIO_PAGO_DEFAULT = 'efectivo';
+
+/** ¿Este medio de pago es una tarjeta de crédito? */
+export function esMedioTarjeta(medioId) {
+  return MEDIOS_PAGO.find(m => m.id === medioId)?.esTarjeta === true;
+}
 
 /**
  * Distribución ideal (% objetivo por categoría).

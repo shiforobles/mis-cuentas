@@ -69,20 +69,36 @@ async function init() {
     import('./services/sync.js').then(({ initSync }) => initSync())
       .catch(e => console.warn('Sync no inicializado:', e.message));
 
-    // 8. Snapshot automático de cartera del mes en curso (en background).
-    //    Se actualiza en cada apertura: al cerrar el mes, el snapshot queda
-    //    congelado con el último estado. Así la Evolución de Cartera no
-    //    depende de acordarse de apretar 📸. No guarda si la cartera está en 0.
-    import('./services/portfolio-history.js').then(async ({ snapshotCurrentMonth }) => {
-      const { dbGet } = await import('./db/database.js');
-      const p = await dbGet('portfolio', 'current');
-      const hayMontos = p && ['liquidez', 'inversiones'].some(sec =>
-        Object.values(p[sec] || {}).some(it => (Number(it.monto) || 0) > 0));
-      if (hayMontos) {
-        const snap = await snapshotCurrentMonth();
-        if (snap) console.log(`📸 Snapshot automático de cartera (${snap.mesId}): guardado`);
+    // 8. Valuar la cartera a precios de mercado y tomar el snapshot del mes.
+    //    Orden importante: primero se actualizan los montos de las líneas con
+    //    tenencias cargadas, y recién después se fotografía la cartera, para
+    //    que el snapshot (y el rendimiento que sale de él) use valores frescos
+    //    y no los del mes pasado. Todo en background y tolerante a fallos.
+    (async () => {
+      try {
+        const { actualizarValuacionCartera } = await import('./services/quotes.js');
+        const r = await actualizarValuacionCartera();
+        if (r.actualizadas > 0) {
+          console.log(`📈 Cartera valuada a mercado: ${r.actualizadas} línea(s)`);
+        }
+      } catch (e) {
+        console.warn('Valuación automática no ejecutada:', e.message);
       }
-    }).catch(e => console.warn('Snapshot automático no ejecutado:', e.message));
+
+      try {
+        const { snapshotCurrentMonth } = await import('./services/portfolio-history.js');
+        const { dbGet } = await import('./db/database.js');
+        const p = await dbGet('portfolio', 'current');
+        const hayMontos = p && ['liquidez', 'inversiones'].some(sec =>
+          Object.values(p[sec] || {}).some(it => (Number(it.monto) || 0) > 0));
+        if (hayMontos) {
+          const snap = await snapshotCurrentMonth();
+          if (snap) console.log(`📸 Snapshot automático de cartera (${snap.mesId}): guardado`);
+        }
+      } catch (e) {
+        console.warn('Snapshot automático no ejecutado:', e.message);
+      }
+    })();
 
     console.log('✓ Mis Cuentas inicializada');
   } catch (error) {

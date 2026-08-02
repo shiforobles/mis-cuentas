@@ -4,16 +4,16 @@
  * distribución ideal, resultado, copiar mes anterior, toggle recurrentes.
  */
 
-import { dbGet, dbPut, dbGetAll, dbDelete } from '../db/database.js';
+import { dbGet, dbPut, dbGetAll, dbDelete, dbGetTransactionsByMonth } from '../db/database.js';
 import { getDolarCCL, setDolarManualForMonth, getMonthDolarInfo } from '../services/dollar.js';
 import {
   calcTotalIngresos, calcTotalEgresos, calcSubtotalCategoria,
   calcRestante, calcIngresosUSD, calcDistribucionIdeal, calcTotalHoras,
-  calcTotalMovimientosCapital
+  calcTotalMovimientosCapital, calcTotalPagosTarjeta, calcConsumosTarjeta
 } from '../services/calculations.js';
 import { getTransactionsForItem, deleteTransaction } from '../services/transactions.js';
 import { formatARS, formatUSD, formatPercent, formatHours, parseNumber, parseHours } from '../utils/format.js';
-import { MESES, MESES_LABEL, MESES_SHORT, CATEGORIAS_EGRESO, mesKey } from '../utils/constants.js';
+import { MESES, MESES_LABEL, MESES_SHORT, CATEGORIAS_EGRESO, MEDIOS_PAGO, mesKey } from '../utils/constants.js';
 import { $, $$, createElement, debounce, generateId, showToast, clearElement } from '../utils/helpers.js';
 import { navigate } from '../router.js';
 
@@ -314,6 +314,7 @@ function renderResult() {
   const totalIngresos = calcTotalIngresos(monthData.ingresos, viewMode);
   const totalEgresos = calcTotalEgresos(monthData.egresos, viewMode);
   const totalInversion = calcTotalMovimientosCapital(monthData.egresos, viewMode);
+  const totalPagoTarjeta = calcTotalPagosTarjeta(monthData.egresos, viewMode);
   const restante = calcRestante(totalIngresos, totalEgresos, dolarCCL);
   const isPositive = restante.ars >= 0;
   const formatDolarLocal = (v) => `$${Number(v||0).toLocaleString('es-AR', {minimumFractionDigits:2})}`;
@@ -360,6 +361,7 @@ function renderResult() {
         </div>
         <div class="result-card__sub">${formatUSD(restante.usd)}</div>
         ${totalInversion > 0 ? `<div class="result-card__sub" style="opacity:.75">líquido ${formatARS(restante.ars - totalInversion)} + inversión ${formatARS(totalInversion)}</div>` : ''}
+        ${totalPagoTarjeta > 0 ? `<div class="result-card__sub" style="opacity:.75">💳 pago de tarjetas: ${formatARS(totalPagoTarjeta)} (ya contado en los rubros)</div>` : ''}
       </div>
     </div>
   `;
@@ -551,8 +553,10 @@ function renderEgresos() {
 
   const totalEgresos = calcTotalEgresos(monthData.egresos, viewMode);
   const totalInversion = calcTotalMovimientosCapital(monthData.egresos, viewMode);
+  const totalPagoTarjeta = calcTotalPagosTarjeta(monthData.egresos, viewMode);
   const categoriasGasto = CATEGORIAS_EGRESO.filter(c => !c.esTransferencia);
-  const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.esTransferencia);
+  const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.tipoTransferencia === 'capital');
+  const categoriasTarjeta = CATEGORIAS_EGRESO.filter(c => c.tipoTransferencia === 'pago_tarjeta');
 
   container.innerHTML = `
     <div class="section__header">
@@ -570,6 +574,19 @@ function renderEgresos() {
         <span class="badge" id="badge-inversion" style="background:var(--color-capital-subtle);color:var(--color-capital-text)">${formatARS(totalInversion)}</span>
       </div>
       <div class="expenses-section expenses-section--capital" id="expenses-capital-container"></div>
+    ` : ''}
+    ${categoriasTarjeta.length ? `
+      <div class="section__header" style="margin-top:var(--space-5)">
+        <h2 class="section__title">
+          <span>💳</span> Pago de tarjetas
+        </h2>
+        <span class="badge" id="badge-tarjeta" style="background:var(--color-capital-subtle);color:var(--color-capital-text)">${formatARS(totalPagoTarjeta)}</span>
+      </div>
+      <div class="form-field__hint" style="margin-bottom:var(--space-2)">
+        No suma a los egresos: los consumos ya se contaron en su rubro cuando compraste. Pagar el resumen solo cancela esa deuda.
+      </div>
+      <div class="expenses-section expenses-section--capital" id="expenses-tarjeta-container"></div>
+      <div id="tarjeta-control"></div>
     ` : ''}
   `;
 
@@ -589,6 +606,53 @@ function renderEgresos() {
       capitalContainer.appendChild(buildCategorySection(cat, catData));
     }
   }
+
+  // Pago de resúmenes de tarjeta: también aparte
+  const tarjetaContainer = $('#expenses-tarjeta-container');
+  if (tarjetaContainer) {
+    for (const cat of categoriasTarjeta) {
+      const catData = monthData.egresos[cat.id] || { items: [] };
+      tarjetaContainer.appendChild(buildCategorySection(cat, catData));
+    }
+    renderControlTarjeta();
+  }
+}
+
+/**
+ * Panel de control de tarjeta: concilia lo que consumiste con tarjeta ESTE mes
+ * contra lo que pagaste de resumen. Sirve para detectar consumos sin registrar
+ * o pagos cargados de más (el clásico doble conteo).
+ */
+async function renderControlTarjeta() {
+  const box = $('#tarjeta-control');
+  if (!box) return;
+
+  const txs = await dbGetTransactionsByMonth(currentMonthKey);
+  const { total: consumos, porTarjeta } = calcConsumosTarjeta(txs);
+  const pagos = calcTotalPagosTarjeta(monthData.egresos, 'real');
+  const sinMedio = (txs || []).filter(t => t.type === 'egreso' && !t.medioPago).length;
+
+  if (!consumos && !pagos) { box.innerHTML = ''; return; }
+
+  const label = (id) => MEDIOS_PAGO.find(m => m.id === id)?.label || id;
+  const detalle = Object.entries(porTarjeta)
+    .map(([m, v]) => `${label(m)}: ${formatARS(v)}`).join(' · ');
+
+  box.innerHTML = `
+    <div class="card" style="margin-top:var(--space-3)">
+      <div style="font-weight:600;font-size:var(--font-size-sm);margin-bottom:var(--space-2)">🔍 Control de tarjeta</div>
+      <div style="display:flex;justify-content:space-between;font-size:var(--font-size-sm);margin-bottom:4px">
+        <span>Consumos con tarjeta este mes</span><strong>${formatARS(consumos)}</strong>
+      </div>
+      ${detalle ? `<div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-bottom:var(--space-2)">${detalle}</div>` : ''}
+      <div style="display:flex;justify-content:space-between;font-size:var(--font-size-sm)">
+        <span>Resúmenes pagados este mes</span><strong>${formatARS(pagos)}</strong>
+      </div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">
+        Lo que consumís este mes se paga en el resumen del mes que viene, así que no tienen por qué coincidir.
+        ${sinMedio > 0 ? `<br><strong>${sinMedio} gasto(s) de este mes no tienen medio de pago cargado</strong> — los gastos viejos se cuentan como efectivo hasta que los edites.` : ''}
+      </div>
+    </div>`;
 }
 
 function buildCategorySection(category, catData) {
@@ -807,14 +871,21 @@ function renderDistribucion() {
   const distribucion = configData?.distribucionIdeal;
   if (!distribucion) return;
   
-  const rows = calcDistribucionIdeal(monthData.egresos, distribucion, viewMode);
-  
+  const rows = calcDistribucionIdeal(monthData.egresos, distribucion, viewMode, monthData.ingresos);
+  const base = rows[0]?.base || 0;
+  const sobreIngresos = rows[0]?.sobreIngresos;
+  const asignado = rows.reduce((s, r) => s + (viewMode === 'real' ? r.montoReal : r.montoProyectado), 0);
+  const sinAsignar = base - asignado;
+
   container.innerHTML = `
     <div class="card">
       <h2 class="card__title">
         <span class="card__title-icon">🎯</span>
         Distribución Ideal
       </h2>
+      <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+        Porcentajes sobre ${sobreIngresos ? `tus ingresos ${viewMode === 'real' ? 'reales' : 'proyectados'} del mes (${formatARS(base)})` : `los egresos del mes (${formatARS(base)}) — cargá ingresos para medirlo sobre lo que ganás`}.
+      </div>
       <div class="distribution-wrap">
         <table class="ideal-table">
           <thead>
@@ -830,9 +901,9 @@ function renderDistribucion() {
           </thead>
           <tbody>
             ${rows.map(r => `
-              <tr>
-                <td style="font-weight:500">${r.nombre}</td>
-                <td class="text-right text-muted">${formatPercent(r.percentIdeal, 0)}</td>
+              <tr${r.esInversion ? ' style="background:var(--color-capital-subtle)"' : ''}>
+                <td style="font-weight:500">${r.esInversion ? '💰 ' : ''}${r.nombre}</td>
+                <td class="text-right text-muted">${formatPercent(r.percentIdeal, 0)}${r.esInversion ? ' mín.' : ''}</td>
                 <td class="text-right">${formatARS(r.montoProyectado)}</td>
                 <td class="text-right">${formatARS(r.montoReal)}</td>
                 <td class="text-right">${formatPercent(r.percentProyectado)}</td>
@@ -841,15 +912,26 @@ function renderDistribucion() {
                   <div class="semaforo semaforo--${r.semaforo}">
                     <span class="semaforo__dot"></span>
                     <span style="font-size:var(--font-size-xs)">
-                      ${r.semaforo === 'ok' ? 'OK' : r.semaforo === 'warning' ? 'Alerta' : 'Excedido'}
+                      ${r.semaforo === 'ok' ? 'OK' : r.semaforo === 'warning' ? 'Alerta' : (r.esInversion ? 'Bajo' : 'Excedido')}
                     </span>
                   </div>
                 </td>
               </tr>
             `).join('')}
+            ${sobreIngresos ? `
+            <tr class="data-table--total">
+              <td><strong>Sin asignar</strong></td>
+              <td class="text-right text-muted">—</td>
+              <td class="text-right" colspan="2"><strong style="color:${sinAsignar >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${formatARS(sinAsignar)}</strong></td>
+              <td class="text-right" colspan="2"><strong>${formatPercent(base > 0 ? (sinAsignar / base) * 100 : 0)}</strong></td>
+              <td></td>
+            </tr>` : ''}
           </tbody>
         </table>
       </div>
+      ${sobreIngresos ? `<div class="form-field__hint" style="margin-top:var(--space-2)">
+        "Sin asignar" es lo que te queda del mes después de gastos e inversión. Si es negativo, gastaste más de lo que entró.
+      </div>` : ''}
     </div>
   `;
 }
@@ -960,6 +1042,10 @@ function updateEgresosTotal() {
   const badgeInversion = document.getElementById('badge-inversion');
   if (badgeInversion) {
     badgeInversion.textContent = formatARS(calcTotalMovimientosCapital(monthData.egresos, viewMode));
+  }
+  const badgeTarjeta = document.getElementById('badge-tarjeta');
+  if (badgeTarjeta) {
+    badgeTarjeta.textContent = formatARS(calcTotalPagosTarjeta(monthData.egresos, viewMode));
   }
 }
 
@@ -1079,12 +1165,14 @@ async function loadTransactionsInModal(item, categoryId, type) {
     return;
   }
   
+  const esGasto = type === 'egreso';
   body.innerHTML = `
     <table class="data-table">
       <thead>
         <tr>
           <th>Fecha</th>
           <th>Nota</th>
+          ${esGasto ? '<th>Pagado con</th>' : ''}
           <th class="text-right">Monto</th>
           <th></th>
         </tr>
@@ -1094,6 +1182,12 @@ async function loadTransactionsInModal(item, categoryId, type) {
           <tr>
             <td class="text-muted" style="font-size:var(--font-size-xs)">${new Date(t.date).toLocaleDateString('es-AR')}</td>
             <td>${t.note || '—'}</td>
+            ${esGasto ? `<td>
+              <select class="form-field__input sel-medio" data-id="${t.id}" style="padding:2px 4px;font-size:var(--font-size-xs);width:auto">
+                <option value="">— sin cargar —</option>
+                ${MEDIOS_PAGO.map(m => `<option value="${m.id}" ${t.medioPago === m.id ? 'selected' : ''}>${m.icon} ${m.label}</option>`).join('')}
+              </select>
+            </td>` : ''}
             <td class="text-right font-semibold">${formatARS(t.amount)}</td>
             <td class="text-right">
               <button class="row-delete btn-delete-tx" data-id="${t.id}" title="Eliminar">✕</button>
@@ -1103,6 +1197,19 @@ async function loadTransactionsInModal(item, categoryId, type) {
       </tbody>
     </table>
   `;
+
+  // Cambiar el medio de pago de una transacción ya cargada (para corregir el
+  // histórico sin tener que borrarla y volver a crearla).
+  body.querySelectorAll('.sel-medio').forEach(sel => {
+    sel.addEventListener('change', async () => {
+      const tx = txs.find(t => t.id === sel.dataset.id);
+      if (!tx) return;
+      tx.medioPago = sel.value || null;
+      await dbPut('transactions', tx);
+      showToast('Medio de pago actualizado', 'success');
+      renderEgresos(); // refresca el panel de control de tarjeta
+    });
+  });
   
   body.querySelectorAll('.btn-delete-tx').forEach(btn => {
     btn.addEventListener('click', async () => {

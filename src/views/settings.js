@@ -7,6 +7,7 @@ import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUs
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
 import { formatARS, formatUSD, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
 import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
+import { parseHoldings, holdingsATexto, actualizarValuacionCartera } from '../services/quotes.js';
 import { $, showToast, debounce, generateId, escapeHtml } from '../utils/helpers.js';
 import { isSupabaseConfigured, signIn, signUp, signOut, getCurrentUser, onAuthChange } from '../services/supabase.js';
 
@@ -104,7 +105,9 @@ export async function renderSettings() {
         <h2 class="settings-group__title">💼 Cartera (montos totales)</h2>
         <div class="form-field__hint" style="margin-bottom:var(--space-3)">
           Cargá los montos totales de tu cartera. Podés renombrar conceptos, cambiar la moneda (ARS/US$), agregar y eliminar. Los valores en US$ se cargan directamente en dólares.
+          <br><strong>Tenencias:</strong> en las líneas en pesos podés cargar ticker + cantidad (ej: <code>AAPL 10, KO 5</code>) y el monto se calcula solo con precios del mercado local.
         </div>
+        <button class="btn btn--secondary btn--sm" id="btn-refresh-quotes" style="margin-bottom:var(--space-3)">📈 Actualizar valores de mercado</button>
         <div id="portfolio-fields"></div>
 
         <h3 style="font-size:var(--font-size-sm);font-weight:600;margin:var(--space-5) 0 var(--space-2);color:var(--color-text-secondary)">🎯 Asignación objetivo</h3>
@@ -667,6 +670,10 @@ function buildPortfolioSection(section, title) {
 
 function buildPortfolioField(key, item, section) {
   const isUSD = item.moneda === 'USD';
+  const tieneHoldings = Boolean(item.holdings?.length);
+  const valuado = item.valuadoAt
+    ? `Valuado por mercado · ${new Date(item.valuadoAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}`
+    : '';
   return `
     <div class="portfolio-item" data-pf-section="${section}" data-pf-key="${key}"
          style="display:flex;flex-direction:column;gap:var(--space-2);padding:var(--space-3);margin-bottom:var(--space-2);border:1px solid var(--color-border);border-radius:var(--radius-md)">
@@ -686,9 +693,22 @@ function buildPortfolioField(key, item, section) {
         <div style="width:120px">
           <input class="form-field__input" type="text" data-pf-field="monto"
                  value="${item.monto || ''}" placeholder="0"
-                 style="text-align:right;padding:var(--space-2)" />
+                 style="text-align:right;padding:var(--space-2)"${tieneHoldings && !isUSD ? ' readonly title="Se calcula con los precios de mercado"' : ''} />
         </div>
       </div>
+      ${isUSD ? '' : `
+      <div style="display:flex;align-items:center;gap:var(--space-2)">
+        <span style="font-size:var(--font-size-xs);color:var(--color-text-tertiary);white-space:nowrap">📈 Tenencias</span>
+        <input class="form-field__input" type="text" data-pf-field="holdingsTexto"
+               value="${escapeHtml(holdingsATexto(item.holdings))}"
+               placeholder="Ej: AAPL 10, KO 5, TX26 1000"
+               style="flex:1;font-size:var(--font-size-xs);padding:var(--space-2)" />
+      </div>
+      <div style="font-size:10px;color:var(--color-text-muted)">
+        ${tieneHoldings
+          ? `Ticker + cantidad. El monto se calcula solo con precios del mercado local. ${valuado}`
+          : 'Opcional: cargá ticker y cantidad (CEDEARs, acciones, bonos, ONs) para que el monto se actualice solo.'}
+      </div>`}
     </div>
   `;
 }
@@ -718,6 +738,31 @@ function wirePortfolioEvents(container) {
     } else if (field === 'detalle') {
       const v = input.value.trim();
       if (v) item.detalle = v; else delete item.detalle;
+    } else if (field === 'holdingsTexto') {
+      // Tenencias: ticker + cantidad. Con holdings cargados, el monto pasa a
+      // calcularse con precios de mercado.
+      const holdings = parseHoldings(input.value);
+      if (holdings.length) {
+        item.holdings = holdings;
+      } else {
+        delete item.holdings;
+        delete item.valuadoAt;
+      }
+      await savePortfolio();
+      if (holdings.length) {
+        const r = await actualizarValuacionCartera(true);
+        portfolioData = await dbGet('portfolio', 'current');
+        renderPortfolioFields();
+        if (r.faltantes.length) {
+          showToast(`Tickers no encontrados: ${r.faltantes.join(', ')}`, 'error');
+        } else {
+          showToast(`Valuado con precios de mercado: ${formatARS(item.monto)}`, 'success');
+        }
+      } else {
+        renderPortfolioFields();
+        showToast('Tenencias borradas: el monto vuelve a ser manual', 'info');
+      }
+      return;
     }
     await savePortfolio();
     // Si se renombró un concepto de liquidez, refrescar el selector de fondo.
@@ -864,6 +909,32 @@ function setupEventListeners() {
     });
   }
   
+  // Actualizar valuación de la cartera con precios de mercado
+  const quotesBtn = $('#btn-refresh-quotes');
+  if (quotesBtn) {
+    quotesBtn.addEventListener('click', async () => {
+      const original = quotesBtn.textContent;
+      quotesBtn.disabled = true;
+      quotesBtn.textContent = '⏳ Consultando mercado…';
+      try {
+        const r = await actualizarValuacionCartera(true);
+        if (r.sinTickers) {
+          showToast('Cargá tenencias (ticker + cantidad) en alguna línea para valuar automáticamente', 'info');
+        } else {
+          portfolioData = await dbGet('portfolio', 'current');
+          renderPortfolioFields();
+          const msg = `${r.actualizadas} línea(s) valuadas: ${formatARS(r.total)}`;
+          showToast(r.faltantes.length ? `${msg}. Sin precio: ${r.faltantes.join(', ')}` : `✓ ${msg}`,
+                    r.faltantes.length ? 'error' : 'success');
+        }
+      } catch (err) {
+        showToast('Error al consultar precios: ' + err.message, 'error');
+      }
+      quotesBtn.disabled = false;
+      quotesBtn.textContent = original;
+    });
+  }
+
   // Tasa propia de los pesos (la que paga la billetera/banco del usuario)
   const tasaInput = $('#config-tasa-pesos');
   if (tasaInput) {

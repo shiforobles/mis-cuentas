@@ -84,6 +84,9 @@ export async function saveTransaction(txData) {
     // ordenar "lo último cargado arriba".
     createdAt: prevTx?.createdAt || txData.createdAt || new Date().toISOString(),
     note: txData.note || '',
+    // Cómo se pagó (efectivo, débito, tarjeta…). Independiente del rubro: sirve
+    // para conciliar los consumos con tarjeta contra el pago del resumen.
+    medioPago: txData.medioPago || prevTx?.medioPago || null,
     carteraLink,
   };
 

@@ -7,7 +7,7 @@ import { dbGet } from '../db/database.js';
 import { saveTransaction } from '../services/transactions.js';
 import { calcTotalIngresos, calcTotalEgresos } from '../services/calculations.js';
 import { formatARS, parseNumber } from '../utils/format.js';
-import { MESES, CATEGORIAS_EGRESO, mesKey } from '../utils/constants.js';
+import { MESES, CATEGORIAS_EGRESO, MEDIOS_PAGO, MEDIO_PAGO_DEFAULT, mesKey, CATEGORIAS_TRANSFERENCIA_IDS } from '../utils/constants.js';
 import { $, showToast, generateId } from '../utils/helpers.js';
 
 let currentMonthKey = null;
@@ -16,6 +16,14 @@ let monthData = null;
 /** Categoría "Inversión" (ver CATEGORIAS_EGRESO en constants.js). */
 const CATEGORIA_INVERSION_ID = 8;
 
+/** Medio de pago recordado entre cargas (lo más habitual se repite). */
+function readUltimoMedioPago() {
+  try {
+    const v = localStorage.getItem('misCuentas.ultimoMedioPago');
+    return MEDIOS_PAGO.some(m => m.id === v) ? v : MEDIO_PAGO_DEFAULT;
+  } catch { return MEDIO_PAGO_DEFAULT; }
+}
+
 let flowState = {
   type: null, // 'egreso' | 'ingreso'
   step: 0,    // 0: home, 1: monto, 2: categoria, 3: item
@@ -23,6 +31,7 @@ let flowState = {
   categoryId: null,
   itemId: null,
   note: '',
+  medioPago: readUltimoMedioPago(), // cómo se pagó (separado del rubro)
   carteraLink: null, // { section, key } destino del aporte en la cartera
 };
 
@@ -112,6 +121,21 @@ export async function renderQuickAdd() {
         <!-- Selector de destino en cartera (solo categoría Inversión) -->
         <div id="qa-cartera-link" style="display:none;margin-bottom:var(--space-4)"></div>
 
+        <!-- Medio de pago (solo egresos): separa el CÓMO del QUÉ -->
+        <div id="qa-medio-pago" style="display:none;margin-bottom:var(--space-4)">
+          <label style="display:block;font-size:var(--font-size-sm);font-weight:600;color:var(--color-text-secondary);margin-bottom:var(--space-2)">
+            ¿Cómo lo pagaste?
+          </label>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-2)" id="qa-medio-grid">
+            ${MEDIOS_PAGO.map(m => `
+              <button type="button" class="btn btn--secondary qa-medio-btn" data-medio="${m.id}"
+                      style="padding:var(--space-2);display:flex;align-items:center;gap:var(--space-2);justify-content:center;font-size:var(--font-size-xs)">
+                <span>${m.icon}</span><span>${m.label}</span>
+              </button>
+            `).join('')}
+          </div>
+        </div>
+
         <div style="margin-bottom:var(--space-4)">
           <input type="text" id="qa-note-input" class="form-input" placeholder="Nota opcional (ej: super Coto)..." style="width:100%">
         </div>
@@ -164,6 +188,7 @@ function bindEvents() {
       showStep(2); // ir a categorías
     } else {
       await loadItems(null); // ingresos no tienen categoría
+      actualizarVisibilidadMedioPago();
       showStep(3); // ir directo a ítems
     }
   });
@@ -174,16 +199,50 @@ function bindEvents() {
       flowState.categoryId = parseInt(btn.dataset.id, 10);
       await loadItems(flowState.categoryId);
       await renderCarteraLinkSelector();
+      actualizarVisibilidadMedioPago();
       showStep(3);
     });
   });
   
+  // Medio de pago
+  document.querySelectorAll('.qa-medio-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      flowState.medioPago = btn.dataset.medio;
+      try { localStorage.setItem('misCuentas.ultimoMedioPago', flowState.medioPago); } catch { /* ignore */ }
+      marcarMedioActivo();
+    });
+  });
+
   // Guardar
   $('#btn-save-tx').addEventListener('click', handleSave);
 }
 
+/** Resalta el medio de pago elegido. */
+function marcarMedioActivo() {
+  document.querySelectorAll('.qa-medio-btn').forEach(b => {
+    const activo = b.dataset.medio === flowState.medioPago;
+    b.style.borderColor = activo ? 'var(--color-primary)' : 'transparent';
+    b.style.fontWeight = activo ? '700' : '400';
+    b.style.opacity = activo ? '1' : '0.65';
+  });
+}
+
+/**
+ * Muestra el selector de medio de pago solo cuando aplica: en egresos que son
+ * gasto real. No aplica en ingresos ni en las categorías de transferencia
+ * (pagar el resumen o invertir sale de una cuenta, no genera consumo nuevo).
+ */
+function actualizarVisibilidadMedioPago() {
+  const wrap = $('#qa-medio-pago');
+  if (!wrap) return;
+  const esTransferencia = CATEGORIAS_TRANSFERENCIA_IDS.includes(flowState.categoryId);
+  const aplica = flowState.type === 'egreso' && !esTransferencia;
+  wrap.style.display = aplica ? 'block' : 'none';
+  if (aplica) marcarMedioActivo();
+}
+
 function startFlow(type) {
-  flowState = { type, step: 1, amount: 0, categoryId: null, itemId: null, note: '', carteraLink: null };
+  flowState = { type, step: 1, amount: 0, categoryId: null, itemId: null, note: '', medioPago: readUltimoMedioPago(), carteraLink: null };
   $('#qa-amount-input').value = '';
   $('#qa-note-input').value = '';
   $('#btn-save-tx').disabled = true;
@@ -354,6 +413,7 @@ async function handleSave() {
       itemId: flowState.itemId,
       amount: flowState.amount,
       note: flowState.note,
+      medioPago: flowState.type === 'egreso' ? flowState.medioPago : null,
       carteraLink: flowState.carteraLink,
     });
 

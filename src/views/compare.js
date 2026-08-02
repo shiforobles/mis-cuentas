@@ -69,7 +69,9 @@ export async function renderCompare(paramStr) {
     const restA = ingA - egA;
     const restB = ingB - egB;
     const categoriasGasto = CATEGORIAS_EGRESO.filter(c => !c.esTransferencia);
-    const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.esTransferencia);
+    // Solo inversión: el pago de tarjetas no es capital ni gasto, se omite acá
+    // para no confundir la comparación (ya está contado en cada rubro).
+    const categoriasCapital = CATEGORIAS_EGRESO.filter(c => c.tipoTransferencia === 'capital');
 
     const arrow = (delta) => delta > 0 ? '▲' : delta < 0 ? '▼' : '—';
     const deltaColor = (delta, inverted = false) => {

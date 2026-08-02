@@ -27,6 +27,9 @@ jobs:
       # npm install (no npm ci): tolera el drift de deps opcionales
       # multiplataforma (@emnapi/* del fallback WASM de rollup).
       - run: npm install --no-audit --no-fund
+      # Los cálculos financieros se testean antes de publicar: si un número se
+      # rompe, el deploy falla en vez de mostrar plata mal en producción.
+      - run: npm test
       - run: npm run build
         env:
           # Credenciales de Supabase (cargar como Secrets del repo en

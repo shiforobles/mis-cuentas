@@ -5,11 +5,21 @@
  */
 
 import { parseHours } from '../utils/format.js';
-import { CATEGORIAS_EGRESO } from '../utils/constants.js';
+import { CATEGORIAS_EGRESO, esMedioTarjeta, MEDIO_PAGO_DEFAULT } from '../utils/constants.js';
 
-/** IDs de categorías que son movimiento de capital, no gasto (ver constants.js). */
+/** IDs de categorías que NO son gasto: capital o pago de tarjeta (ver constants.js). */
 const TRANSFERENCIA_IDS = new Set(
   CATEGORIAS_EGRESO.filter(c => c.esTransferencia).map(c => c.id)
+);
+
+/** IDs de categorías de inversión / movimiento de capital. */
+const CAPITAL_IDS = new Set(
+  CATEGORIAS_EGRESO.filter(c => c.tipoTransferencia === 'capital').map(c => c.id)
+);
+
+/** IDs de categorías de pago de resumen de tarjeta. */
+const PAGO_TARJETA_IDS = new Set(
+  CATEGORIAS_EGRESO.filter(c => c.tipoTransferencia === 'pago_tarjeta').map(c => c.id)
 );
 
 /**
@@ -78,10 +88,53 @@ export function calcTotalMovimientosCapital(egresos, modo = 'proyectado') {
   if (!egresos) return 0;
   let total = 0;
   for (const catId of Object.keys(egresos)) {
-    if (!TRANSFERENCIA_IDS.has(Number(catId))) continue;
+    if (!CAPITAL_IDS.has(Number(catId))) continue;
     total += calcSubtotalCategoria(egresos[catId], modo);
   }
   return total;
+}
+
+/**
+ * Total pagado de resúmenes de tarjeta en el mes. No es gasto (los consumos ya
+ * se registraron en su rubro): es la cancelación del pasivo de la tarjeta.
+ * @param {Object} egresos
+ * @param {'proyectado'|'real'} modo
+ * @returns {number}
+ */
+export function calcTotalPagosTarjeta(egresos, modo = 'proyectado') {
+  if (!egresos) return 0;
+  let total = 0;
+  for (const catId of Object.keys(egresos)) {
+    if (!PAGO_TARJETA_IDS.has(Number(catId))) continue;
+    total += calcSubtotalCategoria(egresos[catId], modo);
+  }
+  return total;
+}
+
+/**
+ * Consumos con tarjeta de crédito en el mes, a partir de las transacciones
+ * (cada una declara su `medioPago`). Es la contraparte de los pagos de resumen:
+ * lo consumido este mes se paga en el resumen del mes siguiente.
+ *
+ * Excluye las transacciones de categorías que no son gasto (inversión y el
+ * propio pago de tarjeta) para no mezclar conceptos.
+ *
+ * @param {Array} transacciones - transacciones del mes
+ * @returns {{ total: number, porTarjeta: Object<string, number> }}
+ */
+export function calcConsumosTarjeta(transacciones) {
+  const porTarjeta = {};
+  let total = 0;
+  for (const t of transacciones || []) {
+    if (t?.type !== 'egreso') continue;
+    if (TRANSFERENCIA_IDS.has(Number(t.categoryId))) continue;
+    const medio = t.medioPago || MEDIO_PAGO_DEFAULT;
+    if (!esMedioTarjeta(medio)) continue;
+    const monto = Number(t.amount) || 0;
+    porTarjeta[medio] = (porTarjeta[medio] || 0) + monto;
+    total += monto;
+  }
+  return { total, porTarjeta };
 }
 
 // ─── 4. SUBTOTAL POR CATEGORÍA ──────────────────────────
@@ -142,40 +195,86 @@ export function calcSemaforo(percentIdeal, percentReal) {
 
 /**
  * Calcula la tabla de distribución ideal completa.
+ *
+ * BASE DE CÁLCULO: los porcentajes se miden sobre los INGRESOS del mes, no
+ * sobre los egresos. Es la lógica del método 50/30/20: "30% de lo que ganás va
+ * a vivienda", no "30% de lo que gastás". Medir sobre egresos tenía dos
+ * problemas: (1) un mes de poco gasto inflaba artificialmente todos los
+ * rubros, y (2) como las categorías de transferencia (inversión, pago de
+ * tarjeta) se excluyen del total, los porcentajes reales se repartían sobre
+ * una base del 100% mientras los ideales visibles sumaban menos, marcando
+ * "excedido" de forma sistemática.
+ *
+ * Con base ingresos, la fila de ahorro/inversión también tiene sentido y el
+ * conjunto cierra: gastos + inversión + no asignado = 100% de lo que entró.
+ *
+ * Si no hay ingresos cargados en el mes, cae a la base anterior (egresos) para
+ * no mostrar todo en 0.
+ *
  * @param {Object} egresos - Datos de egresos del mes
  * @param {Object} distribucionIdeal - { catId: { nombre, percent } }
  * @param {'proyectado'|'real'} modo
+ * @param {Array} [ingresos] - ítems de ingreso del mes (base de cálculo)
  * @returns {Array<Object>}
  */
-export function calcDistribucionIdeal(egresos, distribucionIdeal, modo = 'proyectado') {
-  const totalEgresos = calcTotalEgresos(egresos, modo);
+export function calcDistribucionIdeal(egresos, distribucionIdeal, modo = 'proyectado', ingresos = null) {
+  // Base de cada modo: ingresos del mes; si no hay, egresos (comportamiento viejo).
+  const baseDe = (m) => {
+    const ing = ingresos ? calcTotalIngresos(ingresos, m) : 0;
+    return ing > 0 ? ing : calcTotalEgresos(egresos, m);
+  };
+  const base = baseDe(modo);
+  const baseProy = baseDe('proyectado');
+  const baseReal = baseDe('real');
+  const sobreIngresos = Boolean(ingresos && calcTotalIngresos(ingresos, modo) > 0);
 
   return Object.entries(distribucionIdeal)
-    .filter(([catId]) => !TRANSFERENCIA_IDS.has(Number(catId)))
+    .filter(([catId]) => !PAGO_TARJETA_IDS.has(Number(catId)))
     .map(([catId, config]) => {
     const subtotal = calcSubtotalCategoria(egresos[catId], modo);
-    const percentReal = calcPorcentajeCategoria(subtotal, totalEgresos);
-    const montoIdeal = safeDivide(config.percent * totalEgresos, 100);
-    
+    const percentReal = calcPorcentajeCategoria(subtotal, base);
+    const montoIdeal = safeDivide(config.percent * base, 100);
+
     return {
       catId: Number(catId),
       nombre: config.nombre,
       percentIdeal: config.percent,
+      esInversion: CAPITAL_IDS.has(Number(catId)),
       montoProyectado: calcSubtotalCategoria(egresos[catId], 'proyectado'),
       montoReal: calcSubtotalCategoria(egresos[catId], 'real'),
       percentProyectado: calcPorcentajeCategoria(
         calcSubtotalCategoria(egresos[catId], 'proyectado'),
-        calcTotalEgresos(egresos, 'proyectado')
+        baseProy
       ),
       percentReal: calcPorcentajeCategoria(
         calcSubtotalCategoria(egresos[catId], 'real'),
-        calcTotalEgresos(egresos, 'real')
+        baseReal
       ),
       percentActual: percentReal,
       montoIdeal,
-      semaforo: calcSemaforo(config.percent, percentReal),
+      base,
+      sobreIngresos,
+      // En inversión/ahorro, quedarse CORTO es lo malo (no pasarse).
+      semaforo: CAPITAL_IDS.has(Number(catId))
+        ? calcSemaforoAhorro(config.percent, percentReal)
+        : calcSemaforo(config.percent, percentReal),
     };
   });
+}
+
+/**
+ * Semáforo invertido para ahorro/inversión: acá el objetivo es un MÍNIMO.
+ * Superarlo está bien; quedarse corto es lo que hay que marcar.
+ * @param {number} percentIdeal
+ * @param {number} percentReal
+ * @returns {'ok'|'warning'|'danger'}
+ */
+export function calcSemaforoAhorro(percentIdeal, percentReal) {
+  if (percentIdeal === 0) return 'ok';
+  const ratio = safeDivide(percentReal, percentIdeal);
+  if (ratio >= 0.95) return 'ok';      // llegó al objetivo (5% de tolerancia)
+  if (ratio >= 0.6) return 'warning';  // a mitad de camino
+  return 'danger';                      // muy por debajo
 }
 
 // ─── 8. CARTERA: USD y % ────────────────────────────────
