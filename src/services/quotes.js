@@ -129,6 +129,22 @@ export function holdingsATexto(holdings) {
 }
 
 /**
+ * Cuántas unidades representa el precio publicado.
+ *
+ * Acciones y CEDEARs cotizan por unidad, pero los bonos y las ONs cotizan
+ * "por cada 100 valores nominales" (precio porcentual sobre el nominal). Sin
+ * este ajuste, una tenencia de bonos se valúa 100 veces por encima de lo real.
+ * Verificado contra un resumen de cuenta: 68 nominales de YMCJO a $163.840
+ * valen $111.411 (= 68 × 163.840 / 100), no $11.141.120.
+ *
+ * @param {string} tipo - 'cedear' | 'accion' | 'bono' | 'on'
+ * @returns {number}
+ */
+export function unidadesPorPrecio(tipo) {
+  return tipo === 'bono' || tipo === 'on' ? 100 : 1;
+}
+
+/**
  * Valúa una lista de tenencias con los precios de mercado.
  * @param {Array<{ticker:string, cantidad:number}>} holdings
  * @param {Object} precios - mapa de getCotizaciones()
@@ -142,9 +158,13 @@ export function valuarHoldings(holdings, precios) {
     const t = String(h.ticker).toUpperCase();
     const p = precios?.[t];
     if (!p) { faltantes.push(t); continue; }
-    const valor = p.precio * (Number(h.cantidad) || 0);
+    const divisor = unidadesPorPrecio(p.tipo);
+    const valor = (p.precio * (Number(h.cantidad) || 0)) / divisor;
     total += valor;
-    detalle.push({ ticker: t, cantidad: h.cantidad, precio: p.precio, valor, variacion: p.variacion });
+    detalle.push({
+      ticker: t, cantidad: h.cantidad, precio: p.precio, valor,
+      variacion: p.variacion, tipo: p.tipo, porCien: divisor === 100,
+    });
   }
   return { total, detalle, faltantes };
 }

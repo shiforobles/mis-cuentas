@@ -5,7 +5,7 @@
 import { describe, it, expect } from 'vitest';
 import { calcDolarRealHistorico, variacionSP500, tnaAMensual } from './market.js';
 import { acumularInflacion, acumularDolar } from './inflation.js';
-import { parseHoldings, holdingsATexto, valuarHoldings, tickersEnUso } from './quotes.js';
+import { parseHoldings, holdingsATexto, valuarHoldings, tickersEnUso, unidadesPorPrecio } from './quotes.js';
 
 describe('inflación acumulada', () => {
   it('compone las variaciones mensuales (no las suma)', () => {
@@ -148,6 +148,33 @@ describe('tenencias de cartera', () => {
     const r = valuarHoldings([{ ticker: 'AAPL', cantidad: 10 }], {});
     expect(r.total).toBe(0);
     expect(r.faltantes).toEqual(['AAPL']);
+  });
+
+  it('los bonos y ONs cotizan por cada 100 nominales', () => {
+    expect(unidadesPorPrecio('cedear')).toBe(1);
+    expect(unidadesPorPrecio('accion')).toBe(1);
+    expect(unidadesPorPrecio('bono')).toBe(100);
+    expect(unidadesPorPrecio('on')).toBe(100);
+  });
+
+  it('valúa una ON dividiendo por 100 (caso real de resumen de cuenta)', () => {
+    // 68 nominales de YMCJO a $163.840 valen $111.411,20 — no $11.141.120
+    const precios = { YMCJO: { precio: 163840, tipo: 'on', variacion: 1.63 } };
+    const r = valuarHoldings([{ ticker: 'YMCJO', cantidad: 68 }], precios);
+    expect(r.total).toBeCloseTo(111411.2, 1);
+    expect(r.detalle[0].porCien).toBe(true);
+  });
+
+  it('mezcla CEDEARs y ONs con el factor correcto para cada uno', () => {
+    const precios = {
+      AAPL: { precio: 24370, tipo: 'cedear', variacion: 0 },
+      CLSIO: { precio: 64500, tipo: 'on', variacion: 0 },
+    };
+    const r = valuarHoldings([
+      { ticker: 'AAPL', cantidad: 3 },     // 73.110
+      { ticker: 'CLSIO', cantidad: 113 },  // 72.885
+    ], precios);
+    expect(r.total).toBeCloseTo(145995, 0);
   });
 
   it('lista los tickers en uso de toda la cartera', () => {
