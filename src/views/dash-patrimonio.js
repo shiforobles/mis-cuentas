@@ -3,10 +3,11 @@
  * Evolución patrimonial, ahorro acumulado, proyección de fin de año,
  * y evolución de cartera (F4).
  */
-import { allMonths, dolarPorMes, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
+import { allMonths, dolarPorMes, dolarCCL, chartInstances, getChartDefaults, configData, portfolioData } from './dashboard.js';
 import { calcAhorroAcumulado, calcProyeccionAnual, calcTotalMovimientosCapital } from '../services/calculations.js';
 import { getPortfolioHistoryByYear, calcPortfolioEvolution, calcPortfolioReturns, deletePortfolioSnapshot } from '../services/portfolio-history.js';
-import { getInflacionYear, getInflacionUSAYear, getRiesgoPais, acumularInflacion, acumularDolar } from '../services/inflation.js';
+import { getInflacionYear, getInflacionUSAYear, getInflacionSerie, getInflacionUSASerie, getRiesgoPais, acumularInflacion, acumularDolar } from '../services/inflation.js';
+import { getTasaPlazoFijo, getCCLHistoricoMensual, getSP500Mensual, calcDolarRealHistorico, variacionSP500, tnaAMensual } from '../services/market.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
 import { MESES_SHORT, mesesTranscurridos } from '../utils/constants.js';
 import { showToast } from '../utils/helpers.js';
@@ -43,6 +44,47 @@ export async function renderTabPatrimonio(panel) {
   const riesgo = await getRiesgoPais();
   const riesgoPrevio = riesgo.serie.length >= 2 ? riesgo.serie[riesgo.serie.length - 2] : null;
   const riesgoDelta = riesgo.actual && riesgoPrevio ? riesgo.actual.valor - riesgoPrevio.valor : null;
+
+  // Brecha cambiaria: CCL vs oficial (el widget del dólar ya trae todas las casas)
+  const todasCotiz = configData?.dolarTodas || {};
+  const oficial = Number(todasCotiz.oficial?.venta) || 0;
+  const cclActual = Number(todasCotiz.contadoconliqui?.venta) || dolarCCL || 0;
+  const brechaPct = oficial > 0 && cclActual > 0 ? ((cclActual / oficial) - 1) * 100 : null;
+
+  // Tasa en pesos vs inflación (¿la liquidez remunerada empata los precios?)
+  const tasa = await getTasaPlazoFijo();
+  const inflUltimoMensual = (() => { let v = null; inflMensual.forEach(x => { if (x != null) v = x; }); return v; })();
+  const tasaMensual = tasa?.mejor ? tnaAMensual(tasa.mejor.tna) : null;
+  const tasaVsInflacion = tasaMensual != null && inflUltimoMensual != null ? tasaMensual - inflUltimoMensual : null;
+  // Pesos expuestos: liquidez en ARS de la cartera (lo que sufre o gana con la tasa)
+  const pesosEnRiesgo = Object.values(portfolioData?.liquidez || {})
+    .filter(i => (i.moneda || 'ARS') !== 'USD')
+    .reduce((s, i) => s + (Number(i.monto) || 0), 0);
+  const impactoMensualPesos = tasaVsInflacion != null ? pesosEnRiesgo * (tasaVsInflacion / 100) : null;
+
+  // Dólar caro o barato (CCL de hoy vs su promedio real de los últimos años)
+  const [cclHist, inflARSSerie, inflUSASerie, sp500] = await Promise.all([
+    getCCLHistoricoMensual(), getInflacionSerie(), getInflacionUSASerie(), getSP500Mensual(),
+  ]);
+  const dolarReal = cclHist?.serie
+    ? calcDolarRealHistorico(cclActual, cclHist.serie, inflARSSerie, inflUSASerie, 4)
+    : null;
+
+  // Benchmark S&P 500: rendimiento de la cartera vs el índice, mes a mes
+  const MESES_NUM = { enero: '01', febrero: '02', marzo: '03', abril: '04', mayo: '05', junio: '06', julio: '07', agosto: '08', septiembre: '09', octubre: '10', noviembre: '11', diciembre: '12' };
+  const mesKeyISO = (mesId) => `${año}-${MESES_NUM[mesId] || '01'}`;
+  const benchmark = returns.map((e, i) => {
+    const prev = i > 0 ? returns[i - 1] : null;
+    const spy = prev && sp500?.serie
+      ? variacionSP500(sp500.serie, mesKeyISO(prev.mesId), mesKeyISO(e.mesId))
+      : null;
+    // El rendimiento propio se mide en USD para comparar contra el S&P (que cotiza en USD)
+    const propioPct = prev && prev.granTotalUSD > 0 && e.rendimientoUSD != null
+      ? (e.rendimientoUSD / prev.granTotalUSD) * 100
+      : null;
+    return { ...e, spyPct: spy, propioPctUSD: propioPct, alfa: spy != null && propioPct != null ? propioPct - spy : null };
+  });
+  const conBenchmark = benchmark.filter(b => b.alfa != null);
 
   panel.innerHTML = `
     <div class="dashboard-grid">
@@ -105,6 +147,65 @@ export async function renderTabPatrimonio(panel) {
       `}
     </div>
 
+    <!-- Tus pesos vs la inflación (tasa de plazo fijo de referencia) -->
+    ${tasaVsInflacion != null ? `
+    <div class="card section" ${tasaVsInflacion < 0 ? 'style="border-color:var(--color-warning, #d97706)"' : ''}>
+      <h3 class="card__title"><span class="card__title-icon">🏦</span> Tus pesos vs la inflación</h3>
+      <div class="dashboard-grid">
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">MEJOR TASA DEL MERCADO (PLAZO FIJO)</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatPercent(tasaMensual, 2)} <span style="font-size:var(--font-size-sm);font-weight:500" class="text-muted">mensual · ${formatPercent(tasa.mejor.tna, 0)} TNA</span></div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${tasa.mejor.entidad} · promedio del mercado ${formatPercent(tnaAMensual(tasa.promedioTNA), 2)}/mes</div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">CONTRA LA INFLACIÓN DEL ÚLTIMO MES (${formatPercent(inflUltimoMensual)})</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:${tasaVsInflacion >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${tasaVsInflacion >= 0 ? '+' : ''}${formatPercent(tasaVsInflacion, 2)}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${tasaVsInflacion >= 0 ? 'La tasa le gana a los precios: tus pesos mantienen valor ✓' : 'La tasa pierde contra los precios: tus pesos se licúan'}</div>
+        </div>
+        ${pesosEnRiesgo > 0 ? `
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">IMPACTO EN TUS ${formatARS(pesosEnRiesgo)} EN PESOS</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:${(impactoMensualPesos || 0) >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${(impactoMensualPesos || 0) >= 0 ? '+' : ''}${formatARS(impactoMensualPesos)}/mes</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${(impactoMensualPesos || 0) >= 0 ? 'ganancia real si están bien remunerados' : 'pérdida de poder de compra si NO están remunerados a esta tasa'}</div>
+        </div>` : ''}
+      </div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Tasa de referencia del BCRA (mejor plazo fijo minorista). Compará con lo que te paga tu billetera: si te pagan menos, ahí tenés el costo de la comodidad.</div>
+    </div>` : ''}
+
+    <!-- Dólar caro o barato (CCL ajustado por inflación) -->
+    ${dolarReal ? `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">⚖️</span> ¿El dólar está caro o barato?</h3>
+      <div class="dashboard-grid" style="margin-bottom:var(--space-3)">
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">CCL HOY</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatARS(dolarReal.cclHoy)}</div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">PROMEDIO REAL ÚLTIMOS ${Math.round(dolarReal.meses / 12)} AÑOS (EN PESOS DE HOY)</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatARS(dolarReal.promedio)}</div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">DESVÍO</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:${dolarReal.desvioPct > 10 ? 'var(--color-danger-text)' : dolarReal.desvioPct < -10 ? 'var(--color-success-text)' : 'var(--color-text)'}">${dolarReal.desvioPct >= 0 ? '+' : ''}${formatPercent(dolarReal.desvioPct)}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${dolarReal.desvioPct > 10 ? 'CARO en términos históricos: dolarizar hoy es menos conveniente' : dolarReal.desvioPct < -10 ? 'BARATO en términos históricos: históricamente fue buen momento para dolarizar' : 'En su promedio histórico: ni caro ni barato'}</div>
+        </div>
+      </div>
+      <div class="chart-container" style="height:240px"><canvas id="chart-dolar-real"></canvas></div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Cada punto es el CCL de ese mes actualizado a pesos de hoy (por inflación argentina, descontando la de EE.UU.). La línea punteada es el CCL actual. No es una recomendación: el dólar puede seguir barato o caro mucho tiempo.</div>
+    </div>` : ''}
+
+    <!-- Brecha cambiaria -->
+    ${brechaPct != null ? `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">📐</span> Brecha cambiaria</h3>
+      <div style="display:flex;align-items:baseline;gap:var(--space-4);flex-wrap:wrap">
+        <div style="font-size:var(--font-size-2xl);font-weight:800;color:${brechaPct > 40 ? 'var(--color-danger-text)' : brechaPct > 20 ? 'var(--color-warning-text, #d97706)' : 'var(--color-success-text)'}">${formatPercent(brechaPct)}</div>
+        <div style="font-size:var(--font-size-sm)" class="text-muted">Oficial ${formatARS(oficial)} · CCL ${formatARS(cclActual)}</div>
+      </div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">${brechaPct > 40 ? 'Brecha alta: mayor presión y riesgo de salto devaluatorio.' : brechaPct > 20 ? 'Brecha moderada: hay tensión cambiaria.' : 'Brecha baja: el mercado no descuenta un salto inminente.'} Con brecha chica conviene mirar más el rendimiento; con brecha grande, la cobertura.</div>
+    </div>` : ''}
+
     <!-- Riesgo país: serie de los últimos 24 meses -->
     ${riesgo.serie.length > 1 ? `
     <div class="card section">
@@ -163,6 +264,40 @@ export async function renderTabPatrimonio(panel) {
         </div>
       `}
     </div>
+
+    <!-- Benchmark: tu cartera vs el S&P 500 -->
+    ${conBenchmark.length ? `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">🏁</span> Tu cartera vs el S&P 500</h3>
+      <div class="annual-table-wrap">
+        <table class="data-table">
+          <thead><tr>
+            <th>Mes</th>
+            <th class="text-right" title="Rendimiento propio medido en dólares">Tu cartera (USD)</th>
+            <th class="text-right">S&P 500</th>
+            <th class="text-right" title="Diferencia: cuánto le ganaste o perdiste al índice">Diferencia</th>
+          </tr></thead>
+          <tbody>
+            ${conBenchmark.map(b => {
+              const mesCap = b.mesId.charAt(0).toUpperCase() + b.mesId.slice(1);
+              const cPropio = b.propioPctUSD >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)';
+              const cSpy = b.spyPct >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)';
+              const cAlfa = b.alfa >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)';
+              return `<tr>
+                <td style="font-weight:600">${mesCap}</td>
+                <td class="text-right" style="color:${cPropio};font-weight:600">${b.propioPctUSD >= 0 ? '+' : ''}${formatPercent(b.propioPctUSD, 2)}</td>
+                <td class="text-right" style="color:${cSpy}">${b.spyPct >= 0 ? '+' : ''}${formatPercent(b.spyPct, 2)}</td>
+                <td class="text-right" style="color:${cAlfa};font-weight:700">${b.alfa >= 0 ? '▲ +' : '▼ '}${formatPercent(b.alfa, 2)}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="chart-container" style="height:240px;margin-top:var(--space-4)"><canvas id="chart-benchmark"></canvas></div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">
+        Compara el rendimiento de TU cartera en dólares (sin contar los aportes) contra lo que hubiera hecho el S&P 500 (ETF SPY) en el mismo mes. Diferencia positiva = tu selección le ganó al índice. Necesita snapshots de meses consecutivos y que mantengas actualizados los valores de mercado en Configuración.
+      </div>
+    </div>` : ''}
 
     <div class="card section">
       <h3 class="card__title"><span class="card__title-icon">📋</span> Detalle Ahorro por Mes</h3>
@@ -249,6 +384,43 @@ export async function renderTabPatrimonio(panel) {
             y: { position: 'left', ticks: { color: colors[4] }, grid: { color: gridColor }, title: { display: true, text: '% mensual', color: fontColor, font: { size: 10 } } },
             y1: { position: 'right', ticks: { color: fontColor }, grid: { display: false }, title: { display: true, text: '% acumulado', color: fontColor, font: { size: 10 } } }
           } }
+        });
+      }
+    }
+
+    // Dólar real: CCL histórico traído a pesos de hoy vs CCL actual
+    if (dolarReal) {
+      const ctxD = document.getElementById('chart-dolar-real')?.getContext('2d');
+      if (ctxD) {
+        chartInstances.dolarReal = new Chart(ctxD, {
+          type: 'line',
+          data: {
+            labels: dolarReal.serieReal.map(d => d.mes.slice(2)),
+            datasets: [
+              { label: 'CCL en pesos de hoy', data: dolarReal.serieReal.map(d => d.real), borderColor: colors[3], backgroundColor: colors[3] + '20', fill: true, tension: 0.3, pointRadius: 2 },
+              { label: 'CCL actual', data: dolarReal.serieReal.map(() => dolarReal.cclHoy), borderColor: colors[4], borderDash: [6, 4], borderWidth: 2, pointRadius: 0 },
+              { label: 'Promedio histórico real', data: dolarReal.serieReal.map(() => dolarReal.promedio), borderColor: colors[10], borderDash: [2, 3], borderWidth: 1.5, pointRadius: 0 },
+            ]
+          },
+          options: { ...options, scales: { x: { ticks: { color: fontColor, font: { size: 9 } }, grid: { display: false } }, y: { ticks: { color: fontColor }, grid: { color: gridColor } } } }
+        });
+      }
+    }
+
+    // Benchmark: barras cartera vs S&P 500
+    if (conBenchmark.length) {
+      const ctxB = document.getElementById('chart-benchmark')?.getContext('2d');
+      if (ctxB) {
+        chartInstances.benchmark = new Chart(ctxB, {
+          type: 'bar',
+          data: {
+            labels: conBenchmark.map(b => b.mesId.charAt(0).toUpperCase() + b.mesId.slice(1, 3)),
+            datasets: [
+              { label: 'Tu cartera (USD) %', data: conBenchmark.map(b => b.propioPctUSD), backgroundColor: colors[0] + '99', borderColor: colors[0], borderWidth: 1, borderRadius: 4 },
+              { label: 'S&P 500 %', data: conBenchmark.map(b => b.spyPct), backgroundColor: colors[3] + '99', borderColor: colors[3], borderWidth: 1, borderRadius: 4 },
+            ]
+          },
+          options: { ...options, scales: { x: { ticks: { color: fontColor }, grid: { display: false } }, y: { ticks: { color: fontColor, callback: (v) => v + '%' }, grid: { color: gridColor } } } }
         });
       }
     }
