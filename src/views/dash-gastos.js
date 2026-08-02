@@ -3,11 +3,56 @@
  * Análisis de gastos: dona por categoría, ideal vs real, top gastos, tendencias.
  */
 import { allMonths, dolarCCL, chartInstances, getChartDefaults, configData } from './dashboard.js';
-import { calcTotalEgresos, calcSubtotalCategoria, calcDistribucionIdeal, calcTopGastos, calcTendenciaGastos } from '../services/calculations.js';
+import { calcTotalEgresos, calcSubtotalCategoria, calcDistribucionIdeal, calcTopGastos, calcTendenciaGastos, calcGastosPorMedioPago } from '../services/calculations.js';
+import { dbGetTransactionsByMonth } from '../db/database.js';
 import { formatARS, formatPercent } from '../utils/format.js';
-import { MESES, MESES_SHORT, CATEGORIAS_EGRESO, ROUTES } from '../utils/constants.js';
+import { MESES, MESES_SHORT, CATEGORIAS_EGRESO, ROUTES, labelMedioPago, mesKey } from '../utils/constants.js';
 import { $ } from '../utils/helpers.js';
 import { navigate } from '../router.js';
+
+/**
+ * Panel "En qué billetera se fue la plata": desglosa las salidas del mes por
+ * medio de pago. Sirve de arqueo — el total de cada billetera debería parecerse
+ * al movimiento real de esa app; si no, hay gastos sin registrar.
+ * @param {number} idx - índice del mes (0-11)
+ */
+async function renderMediosPagoPanel(idx) {
+  const cont = document.getElementById('medios-pago-panel');
+  if (!cont) return;
+
+  const año = configData?.año || 2026;
+  const txs = await dbGetTransactionsByMonth(mesKey(MESES[idx], año));
+  const { total, porMedio, sinMedio } = calcGastosPorMedioPago(txs);
+  if (!total) { cont.innerHTML = ''; return; }
+
+  cont.innerHTML = `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">👛</span> Salidas por medio de pago</h3>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-bottom:var(--space-3)">
+        Incluye gastos, inversiones y pagos de resumen: todo lo que salió de cada billetera. Compará cada total con el resumen real de esa app — si no coincide, te falta cargar algo.
+      </div>
+      ${porMedio.map(m => {
+        const pct = total > 0 ? (m.total / total) * 100 : 0;
+        return `
+          <div style="margin-bottom:var(--space-3)">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;gap:var(--space-2);margin-bottom:4px">
+              <span style="font-weight:600;font-size:var(--font-size-sm)">${labelMedioPago(m.medio)}${m.esTarjeta ? ' <span class="text-muted" style="font-weight:400;font-size:var(--font-size-xs)">(se paga en el resumen)</span>' : ''}</span>
+              <span style="white-space:nowrap"><strong>${formatARS(m.total)}</strong> <span class="text-muted" style="font-size:var(--font-size-xs)">· ${m.cantidad} mov.</span></span>
+            </div>
+            <div style="position:relative;height:6px;background:var(--color-bg-tertiary, rgba(255,255,255,.08));border-radius:999px;overflow:hidden">
+              <div style="position:absolute;inset:0 auto 0 0;width:${pct}%;background:${m.esTarjeta ? 'var(--color-capital-text, #a855f7)' : 'var(--color-info-text, #3b82f6)'};border-radius:999px"></div>
+            </div>
+          </div>`;
+      }).join('')}
+      <div style="display:flex;justify-content:space-between;padding-top:var(--space-2);border-top:1px solid var(--color-border);font-weight:700">
+        <span>Total salidas</span><span>${formatARS(total)}</span>
+      </div>
+      ${sinMedio.cantidad > 0 ? `
+        <div style="margin-top:var(--space-2);font-size:var(--font-size-xs);color:var(--color-text-muted)">
+          ${sinMedio.cantidad} movimiento(s) por ${formatARS(sinMedio.total)} sin medio cargado — se cuentan como efectivo. Podés corregirlos desde el detalle de cada ítem en la vista Mes.
+        </div>` : ''}
+    </div>`;
+}
 
 export function renderTabGastos(panel) {
   const mesActualIdx = new Date().getMonth();
@@ -82,6 +127,7 @@ export function renderTabGastos(panel) {
 
     container.innerHTML = `
       ${ritmoHTML}
+      <div id="medios-pago-panel"></div>
       ${alertas.length > 0 ? `<div class="card section" style="border-color:var(--color-danger);background:var(--color-danger-subtle)">
         <div style="font-weight:600;color:var(--color-danger-text);margin-bottom:var(--space-2)">⚠️ Categorías excedidas</div>
         ${alertas.map(a => `<div style="font-size:var(--font-size-sm)">• <strong>${a.nombre}</strong>: ${formatPercent(a.percentActual)} (ideal: ${formatPercent(a.percentIdeal)})</div>`).join('')}
@@ -130,6 +176,8 @@ export function renderTabGastos(panel) {
         </div>
       </div>
     `;
+
+    renderMediosPagoPanel(idx);
 
     // Dona gastos por categoría
     import('chart.js').then(({ Chart, registerables }) => {

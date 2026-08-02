@@ -6,7 +6,7 @@
 import { dbGet, dbPut, dbGetAll, dbDelete, exportAllData, importAllData, resetUserData, checkLocalIntegrity } from '../db/database.js';
 import { getDolarCCL, setDolarManual, saveDolarToMonth } from '../services/dollar.js';
 import { formatARS, formatUSD, formatDolar, formatPercent, parseNumber } from '../utils/format.js';
-import { CATEGORIAS_EGRESO, MESES, mesKey } from '../utils/constants.js';
+import { CATEGORIAS_EGRESO, MESES, mesKey, MEDIOS_PAGO, aplicarMediosPago } from '../utils/constants.js';
 import { parseHoldings, holdingsATexto, actualizarValuacionCartera } from '../services/quotes.js';
 import { $, showToast, debounce, generateId, escapeHtml } from '../utils/helpers.js';
 import { isSupabaseConfigured, signIn, signUp, signOut, getCurrentUser, onAuthChange } from '../services/supabase.js';
@@ -22,6 +22,7 @@ export async function renderSettings() {
   
   configData = await dbGet('config', 'global');
   portfolioData = await dbGet('portfolio', 'current');
+  aplicarMediosPago(configData?.mediosPago); // por si se entra sin recargar la app
   const dolarCCL = await getDolarCCL();
   
   main.innerHTML = `
@@ -63,6 +64,16 @@ export async function renderSettings() {
         </div>
       </div>
 
+      <!-- Medios de pago -->
+      <div class="settings-group">
+        <h2 class="settings-group__title">💳 Medios de pago</h2>
+        <div class="form-field__hint" style="margin-bottom:var(--space-3)">
+          Con qué pagás tus gastos. Marcá <strong>Tarjeta</strong> en las de crédito: sus consumos se concilian contra el pago del resumen. Los gastos ya cargados que usen un medio eliminado lo conservan igual.
+        </div>
+        <div id="medios-pago-list"></div>
+        <button class="btn btn--ghost" id="btn-add-medio" style="width:100%;margin-top:var(--space-2);border:1px dashed var(--color-border)">➕ Agregar medio de pago</button>
+      </div>
+
       <!-- Rendimiento de los pesos -->
       <div class="settings-group">
         <h2 class="settings-group__title">🏦 Tus pesos</h2>
@@ -72,6 +83,13 @@ export async function renderSettings() {
                  value="${configData?.tasaPesosPropia ?? ''}"
                  placeholder="Ej: 16,8" />
           <div class="form-field__hint">La que te pagan por la plata que dejás quieta (Personal Pay, Mercado Pago, plazo fijo…). El dashboard la compara con la inflación y con la mejor tasa del mercado para mostrarte si tus pesos ganan o pierden.</div>
+        </div>
+        <div class="form-field">
+          <label class="form-field__label" for="config-tasa-dolares">Tasa anual (%) que te pagan por tus dólares</label>
+          <input class="form-field__input" type="text" id="config-tasa-dolares"
+                 value="${configData?.tasaDolaresPropia ?? ''}"
+                 placeholder="Ej: 1,9" />
+          <div class="form-field__hint">El rendimiento de tus dólares quietos (cuenta en USD de Mercado Pago, USDT en un exchange…). Se compara contra la inflación de EE.UU., que es lo que le come valor al dólar.</div>
         </div>
       </div>
 
@@ -235,8 +253,40 @@ export async function renderSettings() {
   renderPortfolioTargets();
   renderEmergenciaSelector();
   renderRecurringList();
+  renderMediosPago();
   setupEventListeners();
   renderAccountSection();
+}
+
+// ─── MEDIOS DE PAGO ─────────────────────────────────────────
+
+/** Lista editable de medios de pago (config.mediosPago). */
+function renderMediosPago() {
+  const cont = $('#medios-pago-list');
+  if (!cont) return;
+
+  cont.innerHTML = MEDIOS_PAGO.map((m, i) => `
+    <div class="medio-item" data-medio-idx="${i}"
+         style="display:flex;align-items:center;gap:var(--space-2);padding:var(--space-2);margin-bottom:var(--space-2);border:1px solid var(--color-border);border-radius:var(--radius-md)">
+      <input class="form-field__input" type="text" data-medio-field="icon" value="${escapeHtml(m.icon || '')}"
+             maxlength="2" style="width:44px;text-align:center;padding:var(--space-2)" title="Emoji" />
+      <input class="form-field__input" type="text" data-medio-field="label" value="${escapeHtml(m.label || '')}"
+             placeholder="Nombre" style="flex:1;padding:var(--space-2)" />
+      <label style="display:flex;align-items:center;gap:4px;font-size:var(--font-size-xs);white-space:nowrap;cursor:pointer">
+        <input type="checkbox" data-medio-field="esTarjeta" ${m.esTarjeta ? 'checked' : ''} /> Tarjeta
+      </label>
+      <button class="btn btn--ghost btn--icon" data-medio-action="delete" title="Eliminar"
+              style="color:var(--color-danger-text);flex:0 0 auto">✕</button>
+    </div>
+  `).join('');
+}
+
+/** Persiste la lista viva de medios de pago en config. */
+async function saveMediosPago() {
+  configData.mediosPago = MEDIOS_PAGO.map(m => ({
+    id: m.id, label: m.label, icon: m.icon || '', esTarjeta: !!m.esTarjeta, esCuenta: !!m.esCuenta,
+  }));
+  await dbPut('config', configData);
 }
 
 // ─── CUENTA / SINCRONIZACIÓN (Fase 1: auth + conexión) ──────
@@ -909,6 +959,45 @@ function setupEventListeners() {
     });
   }
   
+  // Medios de pago: editar, marcar como tarjeta, eliminar y agregar.
+  const mediosCont = $('#medios-pago-list');
+  if (mediosCont) {
+    mediosCont.addEventListener('change', async (e) => {
+      const input = e.target.closest('[data-medio-field]');
+      if (!input) return;
+      const idx = Number(input.closest('.medio-item')?.dataset.medioIdx);
+      const medio = MEDIOS_PAGO[idx];
+      if (!medio) return;
+      const field = input.dataset.medioField;
+      if (field === 'esTarjeta') medio.esTarjeta = input.checked;
+      else if (field === 'label') medio.label = input.value.trim() || medio.label;
+      else if (field === 'icon') medio.icon = input.value.trim();
+      await saveMediosPago();
+      showToast('Medios de pago actualizados', 'success');
+    });
+
+    mediosCont.addEventListener('click', async (e) => {
+      const del = e.target.closest('[data-medio-action="delete"]');
+      if (!del) return;
+      const idx = Number(del.closest('.medio-item')?.dataset.medioIdx);
+      const medio = MEDIOS_PAGO[idx];
+      if (!medio) return;
+      if (!confirm(`¿Eliminar "${medio.label}"? Los gastos ya cargados con este medio lo conservan.`)) return;
+      MEDIOS_PAGO.splice(idx, 1);
+      await saveMediosPago();
+      renderMediosPago();
+      showToast('Medio de pago eliminado', 'info');
+    });
+  }
+
+  $('#btn-add-medio')?.addEventListener('click', async () => {
+    MEDIOS_PAGO.push({ id: generateId(), label: 'Nuevo medio', icon: '💳', esTarjeta: false, esCuenta: true });
+    await saveMediosPago();
+    renderMediosPago();
+    const ultimo = $('#medios-pago-list').lastElementChild?.querySelector('[data-medio-field="label"]');
+    if (ultimo) { ultimo.focus(); ultimo.select(); }
+  });
+
   // Actualizar valuación de la cartera con precios de mercado
   const quotesBtn = $('#btn-refresh-quotes');
   if (quotesBtn) {
@@ -951,6 +1040,26 @@ function setupEventListeners() {
         configData.tasaPesosPropia = num;
         await dbPut('config', configData);
         showToast(`Tu tasa: ${num}% TNA (${(num / 12).toFixed(2)}% mensual)`, 'success');
+      }
+    });
+  }
+
+  // Tasa propia de los dólares
+  const tasaUSDInput = $('#config-tasa-dolares');
+  if (tasaUSDInput) {
+    tasaUSDInput.addEventListener('change', async () => {
+      const val = tasaUSDInput.value.trim();
+      if (val === '') {
+        delete configData.tasaDolaresPropia;
+        await dbPut('config', configData);
+        showToast('Tasa en dólares borrada', 'info');
+        return;
+      }
+      const num = parseNumber(val);
+      if (num > 0) {
+        configData.tasaDolaresPropia = num;
+        await dbPut('config', configData);
+        showToast(`Tus dólares: ${num}% anual`, 'success');
       }
     });
   }

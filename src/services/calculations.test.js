@@ -30,6 +30,9 @@ import {
   calcAhorroAcumulado,
   calcProyeccionAnual,
   calcTendenciaGastos,
+  calcGastosPorMedioPago,
+  calcIngresosPorOrigen,
+  calcRentaPasiva,
 } from './calculations.js';
 
 // ─── Helpers de armado de datos ─────────────────────────────
@@ -119,6 +122,96 @@ describe('consumos con tarjeta', () => {
   it('devuelve cero con entrada vacía', () => {
     expect(calcConsumosTarjeta(null).total).toBe(0);
     expect(calcConsumosTarjeta([]).total).toBe(0);
+  });
+});
+
+// ─── Salidas por medio de pago (arqueo) ─────────────────────
+
+describe('gastos por medio de pago', () => {
+  const txs = [
+    { type: 'egreso', categoryId: 1, amount: 100000, medioPago: 'mercadopago' },
+    { type: 'egreso', categoryId: 2, amount: 50000, medioPago: 'mercadopago' },
+    { type: 'egreso', categoryId: 1, amount: 30000, medioPago: 'visa' },
+    { type: 'egreso', categoryId: 8, amount: 500000, medioPago: 'mercadopago' }, // inversión: sale plata igual
+    { type: 'egreso', categoryId: 1, amount: 7000 },                             // sin medio
+    { type: 'ingreso', categoryId: null, amount: 900000, medioPago: 'mercadopago' },
+  ];
+
+  it('agrupa por medio e incluye transferencias (es el arqueo de la billetera)', () => {
+    const r = calcGastosPorMedioPago(txs);
+    const mp = r.porMedio.find(m => m.medio === 'mercadopago');
+    expect(mp.total).toBe(650000); // incluye la inversión de 500.000
+    expect(mp.cantidad).toBe(3);
+    expect(r.total).toBe(687000);
+  });
+
+  it('ordena de mayor a menor', () => {
+    const r = calcGastosPorMedioPago(txs);
+    expect(r.porMedio[0].medio).toBe('mercadopago');
+  });
+
+  it('reporta los movimientos sin medio cargado', () => {
+    const r = calcGastosPorMedioPago(txs);
+    expect(r.sinMedio.cantidad).toBe(1);
+    expect(r.sinMedio.total).toBe(7000);
+  });
+
+  it('no cuenta los ingresos', () => {
+    const r = calcGastosPorMedioPago(txs);
+    expect(r.total).not.toBe(1587000);
+  });
+
+  it('con entrada vacía devuelve ceros', () => {
+    expect(calcGastosPorMedioPago([]).total).toBe(0);
+    expect(calcGastosPorMedioPago(null).porMedio).toEqual([]);
+  });
+});
+
+// ─── Renta pasiva (dividendos) ──────────────────────────────
+
+describe('renta pasiva', () => {
+  const ingresos = [
+    item('Guardia UCO', 0, 1500000),
+    item('Dividendos Bull Market', 0, 80000),
+    item('Renta ON YPF', 0, 20000),
+  ];
+
+  it('separa trabajo de renta de cartera por el nombre', () => {
+    const r = calcIngresosPorOrigen(ingresos, 'real');
+    expect(r.trabajo).toBe(1500000);
+    expect(r.pasivo).toBe(100000);
+    expect(r.total).toBe(1600000);
+    expect(r.pctPasivo).toBeCloseTo(6.25, 2);
+    expect(r.itemsPasivos).toHaveLength(2);
+  });
+
+  it('reconoce varias formas de nombrar la renta', () => {
+    const variantes = ['Dividendo AAPL', 'Cupón AL30', 'Intereses plazo fijo', 'Rendimiento MP'];
+    variantes.forEach(desc => {
+      const r = calcIngresosPorOrigen([item(desc, 0, 1000)], 'real');
+      expect(r.pasivo).toBe(1000);
+    });
+  });
+
+  it('calcula el yield anual sobre lo invertido', () => {
+    const meses = [{ ingresos }, { ingresos }]; // 100.000 de renta por mes
+    const r = calcRentaPasiva(meses, 12000000, 'real');
+    expect(r.totalAnual).toBe(200000);
+    expect(r.promedioMensual).toBe(100000);
+    expect(r.proyeccionAnual).toBe(1200000);
+    expect(r.yieldAnual).toBeCloseTo(10, 5); // 1.200.000 / 12.000.000
+  });
+
+  it('sin cartera invertida no divide por cero', () => {
+    const r = calcRentaPasiva([{ ingresos }], 0, 'real');
+    expect(r.yieldAnual).toBe(0);
+    expect(Number.isFinite(r.yieldAnual)).toBe(true);
+  });
+
+  it('sin dividendos devuelve cero', () => {
+    const r = calcRentaPasiva([{ ingresos: [item('Sueldo', 0, 100000)] }], 1000000, 'real');
+    expect(r.totalAnual).toBe(0);
+    expect(r.mesesConRenta).toBe(0);
   });
 });
 

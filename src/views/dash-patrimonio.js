@@ -4,13 +4,20 @@
  * y evolución de cartera (F4).
  */
 import { allMonths, dolarPorMes, dolarCCL, chartInstances, getChartDefaults, configData, portfolioData } from './dashboard.js';
-import { calcAhorroAcumulado, calcProyeccionAnual, calcTotalMovimientosCapital } from '../services/calculations.js';
+import { calcAhorroAcumulado, calcProyeccionAnual, calcTotalMovimientosCapital, calcRentaPasiva, calcCartera, calcTotalEgresos } from '../services/calculations.js';
 import { getPortfolioHistoryByYear, calcPortfolioEvolution, calcPortfolioReturns, deletePortfolioSnapshot } from '../services/portfolio-history.js';
 import { getInflacionYear, getInflacionUSAYear, getInflacionSerie, getInflacionUSASerie, getRiesgoPais, acumularInflacion, acumularDolar } from '../services/inflation.js';
 import { getTasaPlazoFijo, getCCLHistoricoMensual, getSP500Mensual, calcDolarRealHistorico, variacionSP500, tnaAMensual } from '../services/market.js';
 import { formatARS, formatUSD, formatPercent } from '../utils/format.js';
 import { MESES_SHORT, mesesTranscurridos } from '../utils/constants.js';
 import { showToast } from '../utils/helpers.js';
+
+/** Total de egresos reales de un mes, tolerante a meses vacíos. */
+function calcTotalEgresosSafe(mes) {
+  try {
+    return calcTotalEgresos(mes?.egresos, 'real');
+  } catch { return 0; }
+}
 
 export async function renderTabPatrimonio(panel) {
   const ahorro = calcAhorroAcumulado(allMonths, 'real', dolarCCL, dolarPorMes);
@@ -69,6 +76,30 @@ export async function renderTabPatrimonio(panel) {
     .reduce((s, i) => s + (Number(i.monto) || 0), 0);
   const impactoMensualPesos = tasaVsInflacion != null ? pesosEnRiesgo * (tasaVsInflacion / 100) : null;
   const costoNoMoverse = vsMejor != null ? pesosEnRiesgo * (vsMejor / 100) : null;
+
+  // Rendimiento de los dólares contra la inflación de EE.UU. (la vara real
+  // para la plata dolarizada: el dólar quieto también pierde poder de compra).
+  const tnaUSD = Number(configData?.tasaDolaresPropia) || null;
+  const dolaresEnCartera = Object.values(portfolioData?.liquidez || {})
+    .filter(i => (i.moneda || 'ARS') === 'USD')
+    .reduce((s, i) => s + (Number(i.monto) || 0), 0);
+  // Inflación USA anualizada a partir de lo acumulado del año en curso.
+  const inflUSAAnualizada = inflUSAAcumTotal != null && ultimoUSA >= 0
+    ? (Math.pow(1 + inflUSAAcumTotal / 100, 12 / (ultimoUSA + 1)) - 1) * 100
+    : null;
+  const usdVsInflacion = tnaUSD != null && inflUSAAnualizada != null ? tnaUSD - inflUSAAnualizada : null;
+  const impactoAnualUSD = usdVsInflacion != null ? dolaresEnCartera * (usdVsInflacion / 100) : null;
+
+  // Renta pasiva (dividendos, cupones, intereses) y su yield sobre lo invertido
+  const carteraCalc = portfolioData ? calcCartera(portfolioData, dolarCCL) : null;
+  const invertidoARS = carteraCalc?.totals?.inversionesARS || 0;
+  const renta = calcRentaPasiva(allMonths, invertidoARS, 'real');
+  const gastoMensualProm = (() => {
+    const conDatos = allMonths.filter(m => m && calcTotalEgresosSafe(m) > 0);
+    if (!conDatos.length) return 0;
+    return conDatos.reduce((s, m) => s + calcTotalEgresosSafe(m), 0) / conDatos.length;
+  })();
+  const coberturaGastos = gastoMensualProm > 0 ? (renta.promedioMensual / gastoMensualProm) * 100 : null;
 
   // Dólar caro o barato (CCL de hoy vs su promedio real de los últimos años)
   const [cclHist, inflARSSerie, inflUSASerie, sp500] = await Promise.all([
@@ -185,6 +216,63 @@ export async function renderTabPatrimonio(panel) {
         </div>` : ''}
       <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Referencia: mejor plazo fijo minorista publicado por el BCRA. Tu tasa se edita en Configuración → Tus pesos.</div>
     </div>` : ''}
+
+    <!-- Tus dólares vs la inflación de EE.UU. -->
+    ${tnaUSD != null && inflUSAAnualizada != null ? `
+    <div class="card section" ${usdVsInflacion < 0 ? 'style="border-color:var(--color-warning, #d97706)"' : ''}>
+      <h3 class="card__title"><span class="card__title-icon">💵</span> Tus dólares vs la inflación de EE.UU.</h3>
+      <div class="dashboard-grid">
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">TE PAGAN POR TUS DÓLARES</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatPercent(tnaUSD)} <span style="font-size:var(--font-size-sm);font-weight:500" class="text-muted">anual</span></div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">INFLACIÓN EE.UU. ANUALIZADA</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:${usdVsInflacion >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${usdVsInflacion >= 0 ? '+' : ''}${formatPercent(usdVsInflacion)}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">contra ${formatPercent(inflUSAAnualizada)} de inflación · ${usdVsInflacion >= 0 ? 'tus dólares ganan poder de compra ✓' : 'tus dólares pierden poder de compra'}</div>
+        </div>
+        ${dolaresEnCartera > 0 ? `
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">SOBRE TUS ${formatUSD(dolaresEnCartera, false)}</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:${(impactoAnualUSD || 0) >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)'}">${(impactoAnualUSD || 0) >= 0 ? '+' : ''}${formatUSD(impactoAnualUSD)}/año</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">en poder de compra real</div>
+        </div>` : ''}
+      </div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">Tener dólares te cubre de la inflación argentina, pero el dólar también pierde valor. Editá tu tasa en Configuración → Tus pesos.</div>
+    </div>` : ''}
+
+    <!-- Renta pasiva: dividendos, cupones e intereses -->
+    ${renta.totalAnual > 0 ? `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">🌱</span> Renta pasiva de tu cartera</h3>
+      <div class="dashboard-grid">
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">COBRADO EN ${año}</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:var(--color-success-text)">${formatARS(renta.totalAnual)}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">${formatARS(renta.promedioMensual)}/mes promedio · ${renta.mesesConRenta} mes(es) con cobro</div>
+        </div>
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">RENDIMIENTO SOBRE LO INVERTIDO</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800">${formatPercent(renta.yieldAnual)} <span style="font-size:var(--font-size-sm);font-weight:500" class="text-muted">anual</span></div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">proyectando ${formatARS(renta.proyeccionAnual)}/año sobre ${formatARS(invertidoARS)}</div>
+        </div>
+        ${coberturaGastos != null ? `
+        <div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-tertiary)">CUBRE DE TUS GASTOS</div>
+          <div style="font-size:var(--font-size-xl);font-weight:800;color:var(--color-info-text)">${formatPercent(coberturaGastos)}</div>
+          <div style="font-size:var(--font-size-xs);color:var(--color-text-muted)">de tu gasto mensual promedio (${formatARS(gastoMensualProm)})</div>
+        </div>` : ''}
+      </div>
+      <div style="font-size:var(--font-size-xs);color:var(--color-text-muted);margin-top:var(--space-2)">
+        Suma los ingresos cuyo nombre incluya "dividendo", "cupón", "renta" o "interés". Es la parte de tus ingresos que no depende de tus horas: el número que mide el avance hacia vivir de la cartera.
+      </div>
+    </div>` : `
+    <div class="card section">
+      <h3 class="card__title"><span class="card__title-icon">🌱</span> Renta pasiva de tu cartera</h3>
+      <div class="text-muted" style="font-size:var(--font-size-sm)">
+        Todavía no registraste dividendos ni rentas. Cargalos como un ingreso más en la vista Mes con un nombre que incluya <strong>"Dividendos"</strong> (ej: "Dividendos Bull Market") y acá vas a ver cuánto rinde tu cartera por año y qué porcentaje de tus gastos cubre.
+      </div>
+    </div>`}
 
     <!-- Dólar caro o barato (CCL ajustado por inflación) -->
     ${dolarReal ? `

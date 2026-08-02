@@ -5,7 +5,7 @@
  */
 
 import { parseHours } from '../utils/format.js';
-import { CATEGORIAS_EGRESO, esMedioTarjeta, MEDIO_PAGO_DEFAULT } from '../utils/constants.js';
+import { CATEGORIAS_EGRESO, esMedioTarjeta, MEDIO_PAGO_DEFAULT, esIngresoPasivo } from '../utils/constants.js';
 
 /** IDs de categorías que NO son gasto: capital o pago de tarjeta (ver constants.js). */
 const TRANSFERENCIA_IDS = new Set(
@@ -55,6 +55,62 @@ export function calcIngresosUSD(ingresosARS, dolarCCL) {
 export function calcTotalIngresos(ingresos, modo = 'proyectado') {
   if (!ingresos || !Array.isArray(ingresos)) return 0;
   return ingresos.reduce((sum, item) => sum + (Number(item[modo]) || 0), 0);
+}
+
+/**
+ * Separa los ingresos entre trabajo y renta de la cartera (dividendos, cupones,
+ * intereses). La renta pasiva es la que mide el progreso hacia la independencia
+ * financiera: cuánto entra sin poner horas.
+ *
+ * @param {Array} ingresos
+ * @param {'proyectado'|'real'} modo
+ * @returns {{ trabajo:number, pasivo:number, total:number, pctPasivo:number, itemsPasivos:Array }}
+ */
+export function calcIngresosPorOrigen(ingresos, modo = 'real') {
+  let trabajo = 0;
+  let pasivo = 0;
+  const itemsPasivos = [];
+  for (const item of ingresos || []) {
+    const monto = Number(item?.[modo]) || 0;
+    if (esIngresoPasivo(item?.descripcion)) {
+      pasivo += monto;
+      if (monto > 0) itemsPasivos.push({ descripcion: item.descripcion, monto });
+    } else {
+      trabajo += monto;
+    }
+  }
+  const total = trabajo + pasivo;
+  return { trabajo, pasivo, total, pctPasivo: safeDivide(pasivo, total) * 100, itemsPasivos };
+}
+
+/**
+ * Renta pasiva anual y su rendimiento sobre la cartera invertida.
+ * Responde: "¿cuánto me paga por año lo que tengo invertido?".
+ *
+ * @param {Array} meses - documentos de mes del año
+ * @param {number} carteraInversionesARS - total invertido (de calcCartera)
+ * @param {'proyectado'|'real'} modo
+ * @returns {{ totalAnual:number, promedioMensual:number, mesesConRenta:number, yieldAnual:number, proyeccionAnual:number }}
+ */
+export function calcRentaPasiva(meses, carteraInversionesARS = 0, modo = 'real') {
+  let totalAnual = 0;
+  let mesesConRenta = 0;
+  let mesesTranscurridos = 0;
+  for (const m of meses || []) {
+    if (!m) continue;
+    const { pasivo, total } = calcIngresosPorOrigen(m.ingresos, modo);
+    if (total > 0) mesesTranscurridos++;
+    if (pasivo > 0) { totalAnual += pasivo; mesesConRenta++; }
+  }
+  const promedioMensual = safeDivide(totalAnual, mesesTranscurridos || mesesConRenta);
+  const proyeccionAnual = promedioMensual * 12;
+  return {
+    totalAnual,
+    promedioMensual,
+    mesesConRenta,
+    proyeccionAnual,
+    yieldAnual: safeDivide(proyeccionAnual, carteraInversionesARS) * 100,
+  };
 }
 
 // ─── 3. TOTAL EGRESOS ───────────────────────────────────
@@ -135,6 +191,40 @@ export function calcConsumosTarjeta(transacciones) {
     total += monto;
   }
   return { total, porTarjeta };
+}
+
+/**
+ * Desglose de salidas de plata por medio de pago. A diferencia de
+ * calcConsumosTarjeta, acá SÍ entran las transferencias (invertir o pagar el
+ * resumen también saca plata de la billetera): el objetivo es poder contrastar
+ * el total contra el resumen real de la cuenta — el arqueo que permite
+ * detectar gastos sin registrar.
+ *
+ * @param {Array} transacciones - transacciones del mes
+ * @returns {{ total:number, porMedio:Array<{medio,total,cantidad,esTarjeta}>, sinMedio:{total:number,cantidad:number} }}
+ */
+export function calcGastosPorMedioPago(transacciones) {
+  const acc = new Map();
+  let total = 0;
+  const sinMedio = { total: 0, cantidad: 0 };
+
+  for (const t of transacciones || []) {
+    if (t?.type !== 'egreso') continue;
+    const monto = Number(t.amount) || 0;
+    if (!t.medioPago) { sinMedio.total += monto; sinMedio.cantidad++; }
+    const medio = t.medioPago || MEDIO_PAGO_DEFAULT;
+    if (!acc.has(medio)) acc.set(medio, { medio, total: 0, cantidad: 0, esTarjeta: esMedioTarjeta(medio) });
+    const e = acc.get(medio);
+    e.total += monto;
+    e.cantidad++;
+    total += monto;
+  }
+
+  return {
+    total,
+    porMedio: [...acc.values()].sort((a, b) => b.total - a.total),
+    sinMedio,
+  };
 }
 
 // ─── 4. SUBTOTAL POR CATEGORÍA ──────────────────────────

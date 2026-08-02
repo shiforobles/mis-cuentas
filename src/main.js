@@ -40,6 +40,17 @@ async function init() {
     // 3. Inicializar base de datos con datos por defecto
     await seedDatabase();
 
+    // 3a. Cargar los medios de pago del usuario (si los personalizó) antes de
+    //     renderizar cualquier vista que los use.
+    try {
+      const { dbGet } = await import('./db/database.js');
+      const { aplicarMediosPago } = await import('./utils/constants.js');
+      const cfg = await dbGet('config', 'global');
+      aplicarMediosPago(cfg?.mediosPago);
+    } catch (e) {
+      console.warn('Medios de pago: usando los predeterminados —', e.message);
+    }
+
     // 3b. Reparar integridad: los `real` se recalculan desde las transacciones
     //     (fuente de verdad). Corrige meses pisados por conflictos de sync y
     //     re-adopta transacciones huérfanas. Idempotente y barato.

@@ -149,24 +149,56 @@ export const CATEGORIAS_PAGO_TARJETA_IDS = CATEGORIAS_EGRESO
   .map(c => c.id);
 
 /**
- * Medios de pago disponibles al cargar un gasto. Separan el CÓMO se pagó del
- * QUÉ se compró (la categoría). Los marcados con `esTarjeta` generan un
- * consumo que se cancela después con el pago del resumen.
+ * Medios de pago por defecto. Separan el CÓMO se pagó del QUÉ se compró (la
+ * categoría). Los marcados con `esTarjeta` generan un consumo que se cancela
+ * después con el pago del resumen; los `esCuenta` son billeteras o cuentas de
+ * las que sale la plata en el momento (sirven para el arqueo).
+ *
+ * Se pueden editar en Configuración (quedan en `config.mediosPago`); estos son
+ * el punto de partida. Los ids no deben cambiar: las transacciones ya cargadas
+ * los referencian.
  */
-export const MEDIOS_PAGO = [
-  { id: 'efectivo', label: 'Efectivo', icon: '💵', esTarjeta: false },
-  { id: 'debito', label: 'Débito / Transferencia', icon: '🏦', esTarjeta: false },
-  { id: 'visa', label: 'Tarjeta VISA', icon: '💳', esTarjeta: true },
-  { id: 'mastercard', label: 'Tarjeta Mastercard', icon: '💳', esTarjeta: true },
-  { id: 'otra_tarjeta', label: 'Otra tarjeta', icon: '💳', esTarjeta: true },
+export const MEDIOS_PAGO_DEFAULT = [
+  { id: 'mercadopago', label: 'Mercado Pago', icon: '💙', esTarjeta: false, esCuenta: true },
+  { id: 'personalpay', label: 'Personal Pay', icon: '📱', esTarjeta: false, esCuenta: true },
+  { id: 'visa', label: 'Tarjeta VISA', icon: '💳', esTarjeta: true, esCuenta: false },
+  { id: 'mastercard', label: 'Tarjeta Mastercard', icon: '💳', esTarjeta: true, esCuenta: false },
+  { id: 'debito', label: 'Transferencia / Débito', icon: '🏦', esTarjeta: false, esCuenta: true },
+  { id: 'efectivo', label: 'Efectivo', icon: '💵', esTarjeta: false, esCuenta: false },
 ];
 
-/** Medio de pago por defecto cuando la transacción no lo declara (datos viejos). */
+/**
+ * Lista viva de medios de pago. Arranca con los defaults y se reemplaza con los
+ * del usuario al iniciar la app (ver aplicarMediosPago). Es un array mutable en
+ * vez de una constante para que las vistas y los cálculos que ya lo importan
+ * vean siempre la configuración vigente sin tener que pasarla por parámetro.
+ */
+export const MEDIOS_PAGO = [...MEDIOS_PAGO_DEFAULT];
+
+/**
+ * Reemplaza la lista viva por la configuración del usuario.
+ * @param {Array|null} medios - lista guardada en config; si es inválida, restaura los defaults.
+ */
+export function aplicarMediosPago(medios) {
+  const validos = Array.isArray(medios)
+    ? medios.filter(m => m && typeof m.id === 'string' && m.id.trim() && typeof m.label === 'string')
+    : [];
+  MEDIOS_PAGO.length = 0;
+  MEDIOS_PAGO.push(...(validos.length ? validos : MEDIOS_PAGO_DEFAULT));
+}
+
+/** Medio de pago asumido cuando la transacción no lo declara (datos viejos). */
 export const MEDIO_PAGO_DEFAULT = 'efectivo';
 
 /** ¿Este medio de pago es una tarjeta de crédito? */
 export function esMedioTarjeta(medioId) {
   return MEDIOS_PAGO.find(m => m.id === medioId)?.esTarjeta === true;
+}
+
+/** Etiqueta legible de un medio de pago (con ícono). */
+export function labelMedioPago(medioId) {
+  const m = MEDIOS_PAGO.find(x => x.id === medioId);
+  return m ? `${m.icon || ''} ${m.label}`.trim() : (medioId || '—');
 }
 
 /**
@@ -186,6 +218,26 @@ export const DISTRIBUCION_IDEAL = {
   9: { nombre: 'Generosidad', percent: 0 },
   10: { nombre: 'Otros', percent: 5 },
 };
+
+/**
+ * Marca que identifica a un ingreso como renta de la cartera (dividendos,
+ * cupones, intereses) en vez de ingreso por trabajo. Se detecta por el nombre
+ * del ítem para no obligar a migrar los datos ya cargados.
+ */
+export const PATRONES_INGRESO_PASIVO = [
+  'dividendo', 'dividendos', 'cupón', 'cupon', 'renta', 'interes', 'interés',
+  'intereses', 'rendimiento', 'rendimientos',
+];
+
+/**
+ * ¿Este ingreso es renta de la cartera (pasivo) y no trabajo?
+ * @param {string} descripcion
+ * @returns {boolean}
+ */
+export function esIngresoPasivo(descripcion) {
+  const d = String(descripcion || '').toLowerCase();
+  return PATRONES_INGRESO_PASIVO.some(p => d.includes(p));
+}
 
 /**
  * Ítems de ingreso plantilla (precargados para cada mes).
