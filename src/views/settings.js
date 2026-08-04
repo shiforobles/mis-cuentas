@@ -783,6 +783,11 @@ function wirePortfolioEvents(container) {
     const field = input.dataset.pfField;
     if (field === 'monto') {
       item.monto = parseNumber(input.value);
+      // Marca de "revisado a mano": sirve para avisar cuando los valores de
+      // mercado quedaron viejos. No se estampa en escrituras automáticas
+      // (aportes desde Quick Add, valuación por tickers), que no implican que
+      // el usuario haya mirado el saldo real del broker.
+      portfolioData.montosRevisadosAt = new Date().toISOString();
     } else if (field === 'label') {
       item.label = input.value.trim();
     } else if (field === 'detalle') {

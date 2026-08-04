@@ -25,6 +25,7 @@ export function renderTabCartera(panel) {
         <span class="portfolio-total__ars">${formatARS(c.totals.granTotalARS)}</span>
         <span class="portfolio-total__usd">${formatUSD(c.totals.granTotalUSD)}</span>
       </div>
+      ${buildFrescuraCard(portfolioData)}
       <button class="btn btn--secondary btn--sm" id="btn-dash-snapshot" style="width:100%;margin-top:var(--space-3)">📸 Guardar snapshot de cartera</button>
     </div>
 
@@ -120,6 +121,50 @@ export function renderTabCartera(panel) {
       });
     }
   }).catch(e => console.error('Chart.js error:', e));
+}
+
+/** Días de antigüedad de una fecha ISO (null si no hay fecha). */
+function diasDesde(iso) {
+  if (!iso) return null;
+  const t = Date.parse(iso);
+  if (Number.isNaN(t)) return null;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+
+/**
+ * Aviso de "valores desactualizados". Los montos cargados a mano envejecen: el
+ * rendimiento mensual y el patrimonio se calculan con ellos, así que si hace
+ * semanas que no se revisan, los números dicen poco. Solo aplica a las líneas
+ * manuales — las que tienen tenencias se valúan solas.
+ * @param {object} portfolio
+ * @returns {string} HTML
+ */
+function buildFrescuraCard(portfolio) {
+  const lineas = ['liquidez', 'inversiones']
+    .flatMap(sec => Object.values(portfolio?.[sec] || {}));
+  const manuales = lineas.filter(i => !i?.holdings?.length && (Number(i?.monto) || 0) > 0);
+  if (!manuales.length) return ''; // toda la cartera se valúa por tickers
+
+  const dias = diasDesde(portfolio?.montosRevisadosAt);
+  const hoy = new Date();
+  const finDeMes = new Date(hoy.getFullYear(), hoy.getMonth() + 1, 0).getDate() - hoy.getDate();
+
+  // Sin marca previa (o vieja) → recordar. El corte es ~25 días para que el
+  // aviso aparezca cerca del cierre de mes, que es cuando importa.
+  const desactualizado = dias == null || dias >= 25;
+  if (!desactualizado && finDeMes > 3) return '';
+
+  const warn = 'var(--color-warning-text, #d97706)';
+  const texto = dias == null
+    ? 'Todavía no confirmaste los valores de tu cartera.'
+    : `Actualizaste los montos hace ${dias} día${dias === 1 ? '' : 's'}.`;
+
+  return `
+    <div style="margin-top:var(--space-3);padding:var(--space-2) var(--space-3);border-radius:var(--radius-sm);background:var(--color-warning-bg, rgba(217,119,6,.12));border:1px solid ${warn};font-size:var(--font-size-xs);color:var(--color-text-secondary)">
+      ⏰ <strong>${texto}</strong>
+      ${finDeMes <= 3 ? ' Estás por cerrar el mes: ' : ' '}Pegá el total actualizado de tu broker en Configuración → Cartera para que el rendimiento del mes sea real.
+      ${manuales.length ? `<br><span class="text-muted">${manuales.length} línea(s) con monto manual: ${manuales.map(i => i.label).filter(Boolean).join(', ')}</span>` : ''}
+    </div>`;
 }
 
 /**
